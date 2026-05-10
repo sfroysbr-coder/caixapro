@@ -413,11 +413,193 @@ function Analytics({onClose,sales,cashTx,products,clients,dark}){
   );
 }
 
+
+// ─── TELA DE NOTÍCIAS ────────────────────────────────────────────────────────
+const NEWS_FEEDS = [
+  {label:"Tirzepatida",    q:"tirzepatida"},
+  {label:"Mounjaro",       q:"mounjaro+tirzepatida"},
+  {label:"Emagrecimento",  q:"emagrecimento+medicamento"},
+  {label:"Ozempic/GLP-1",  q:"ozempic+semaglutida+emagrecimento"},
+  {label:"Saúde & Dieta",  q:"saúde+alimentação+emagrecer"},
+];
+
+function NewsScreen({dark}){
+  const[articles,setArticles]=useState([]);
+  const[loading,setLoading]=useState(false);
+  const[error,setError]=useState(null);
+  const[activeTab,setActiveTab]=useState(0);
+  const[lastUpdate,setLastUpdate]=useState(null);
+
+  const fetchNews=useCallback(async(tabIdx)=>{
+    setLoading(true);setError(null);setArticles([]);
+    const q=NEWS_FEEDS[tabIdx].q;
+    // Usa o serviço rss2json para converter Google News RSS em JSON
+    const rssUrl=`https://news.google.com/rss/search?q=${encodeURIComponent(q)}&hl=pt-BR&gl=BR&ceid=BR:pt`;
+    const apiUrl=`https://api.rss2json.com/v1/api.json?rss_url=${encodeURIComponent(rssUrl)}&count=20`;
+    try{
+      const r=await fetch(apiUrl);
+      const data=await r.json();
+      if(data.status==="ok"&&data.items?.length>0){
+        setArticles(data.items.map(item=>({
+          title:item.title?.replace(/<[^>]*>/g,"").replace(/\s+-\s+.+$/,"").trim(),
+          link:item.link,
+          pubDate:item.pubDate,
+          source:item.author||new URL(item.link||"https://google.com").hostname.replace("www.",""),
+          thumbnail:item.thumbnail||null,
+          description:item.description?.replace(/<[^>]*>/g,"").slice(0,200)||"",
+        })));
+        setLastUpdate(new Date().toLocaleTimeString("pt-BR"));
+      }else{
+        setError("Nenhuma notícia encontrada. Tente outra categoria.");
+      }
+    }catch(e){
+      // Fallback: tenta RSS direto do Google
+      try{
+        const rssR=await fetch(`https://api.allorigins.win/get?url=${encodeURIComponent(rssUrl)}`);
+        const rssData=await rssR.json();
+        // Parse XML básico
+        const parser=new DOMParser();
+        const xml=parser.parseFromString(rssData.contents,"text/xml");
+        const items=Array.from(xml.querySelectorAll("item")).slice(0,20);
+        if(items.length>0){
+          setArticles(items.map(item=>({
+            title:item.querySelector("title")?.textContent?.replace(/<[^>]*>/g,"").replace(/\s+-\s+.+$/,"").trim()||"Sem título",
+            link:item.querySelector("link")?.textContent||"#",
+            pubDate:item.querySelector("pubDate")?.textContent||"",
+            source:item.querySelector("source")?.textContent||"Google News",
+            thumbnail:null,
+            description:item.querySelector("description")?.textContent?.replace(/<[^>]*>/g,"").slice(0,200)||"",
+          })));
+          setLastUpdate(new Date().toLocaleTimeString("pt-BR"));
+        }else{
+          setError("Erro ao carregar. Verifique sua conexão.");
+        }
+      }catch(e2){
+        setError("Não foi possível carregar as notícias. Verifique sua conexão com a internet.");
+      }
+    }
+    setLoading(false);
+  },[]);
+
+  useEffect(()=>{fetchNews(activeTab);},[activeTab,fetchNews]);
+
+  const fmtDate=d=>{
+    if(!d)return"";
+    try{
+      const dt=new Date(d);
+      const diff=Math.floor((new Date()-dt)/60000);
+      if(diff<60)return`${diff}min atrás`;
+      if(diff<1440)return`${Math.floor(diff/60)}h atrás`;
+      return dt.toLocaleDateString("pt-BR");
+    }catch{return"";}
+  };
+
+  return(
+    <div style={{animation:"fadeUp .4s ease"}}>
+      {/* Header */}
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:"1rem",flexWrap:"wrap",gap:".5rem"}}>
+        <div>
+          <h2 style={{fontFamily:"'Syne',sans-serif",fontWeight:800,fontSize:"1.05rem",color:"var(--tx)"}}>📰 Notícias</h2>
+          <div style={{fontSize:".67rem",color:"var(--tx5)",marginTop:".1rem"}}>Feed ao vivo · Tirzepatida, Emagrecimento & Saúde</div>
+        </div>
+        <div style={{display:"flex",alignItems:"center",gap:".5rem"}}>
+          {lastUpdate&&<span style={{fontSize:".65rem",color:"var(--sub)"}}>Atualizado: {lastUpdate}</span>}
+          <button onClick={()=>fetchNews(activeTab)} disabled={loading} style={{display:"inline-flex",alignItems:"center",gap:".3rem",padding:".35rem .7rem",borderRadius:".4rem",background:"#4f5ef020",color:"#4f5ef0",border:"1px solid #4f5ef040",fontSize:".73rem",fontFamily:"'DM Sans',sans-serif",fontWeight:600}}>
+            <Ic n="sync" s={12}/>{loading?"Carregando...":"Atualizar"}
+          </button>
+        </div>
+      </div>
+
+      {/* Tabs de categoria */}
+      <div style={{display:"flex",gap:".35rem",marginBottom:"1rem",overflowX:"auto",paddingBottom:".25rem"}}>
+        {NEWS_FEEDS.map((f,i)=>(
+          <button key={i} onClick={()=>{setActiveTab(i);}} style={{padding:".3rem .75rem",borderRadius:"99px",border:`1px solid ${activeTab===i?"#4f5ef0":"var(--bdr2)"}`,background:activeTab===i?"#4f5ef0":"transparent",color:activeTab===i?"#fff":"var(--navoff)",fontSize:".73rem",fontFamily:"'DM Sans',sans-serif",fontWeight:600,whiteSpace:"nowrap",transition:"all .2s"}}>
+            {f.label}
+          </button>
+        ))}
+      </div>
+
+      {/* Loading */}
+      {loading&&(
+        <div style={{display:"grid",gap:".75rem"}}>
+          {[1,2,3,4,5].map(i=>(
+            <div key={i} style={{background:"var(--card)",border:"1px solid var(--bdr)",borderRadius:".75rem",padding:"1rem",display:"flex",gap:".85rem",alignItems:"flex-start"}}>
+              <div style={{width:80,height:80,borderRadius:".5rem",background:"var(--bdr)",flexShrink:0,animation:"pulse 1.5s ease infinite"}}/>
+              <div style={{flex:1}}>
+                <div style={{height:14,background:"var(--bdr)",borderRadius:4,marginBottom:".5rem",animation:"pulse 1.5s ease infinite"}}/>
+                <div style={{height:14,background:"var(--bdr)",borderRadius:4,width:"75%",marginBottom:".5rem",animation:"pulse 1.5s ease infinite"}}/>
+                <div style={{height:11,background:"var(--bdr)",borderRadius:4,width:"40%",animation:"pulse 1.5s ease infinite"}}/>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Erro */}
+      {!loading&&error&&(
+        <div style={{background:"var(--card)",border:"1px solid #f59e0b40",borderRadius:".75rem",padding:"2rem",textAlign:"center"}}>
+          <div style={{fontSize:"2.5rem",marginBottom:".75rem"}}>📡</div>
+          <div style={{color:"#f59e0b",fontWeight:700,fontSize:".88rem",marginBottom:".4rem"}}>Sem conexão com os feeds</div>
+          <div style={{color:"var(--tx5)",fontSize:".78rem",marginBottom:"1rem"}}>{error}</div>
+          <button onClick={()=>fetchNews(activeTab)} style={{padding:".5rem 1.1rem",borderRadius:".45rem",background:"linear-gradient(135deg,#4f5ef0,#8b44f0)",color:"#fff",border:"none",fontFamily:"'DM Sans',sans-serif",fontWeight:600,fontSize:".82rem"}}>
+            Tentar novamente
+          </button>
+        </div>
+      )}
+
+      {/* Notícias */}
+      {!loading&&!error&&articles.length>0&&(
+        <div style={{display:"grid",gap:".75rem"}}>
+          {articles.map((a,i)=>(
+            <a key={i} href={a.link} target="_blank" rel="noopener noreferrer" style={{textDecoration:"none",display:"block"}}>
+              <div style={{background:"var(--card)",border:"1px solid var(--bdr)",borderRadius:".75rem",padding:"1rem",display:"flex",gap:".85rem",alignItems:"flex-start",transition:"border-color .2s, transform .15s",cursor:"pointer"}}
+                onMouseEnter={e=>{e.currentTarget.style.borderColor="#4f5ef0";e.currentTarget.style.transform="translateY(-2px)";}}
+                onMouseLeave={e=>{e.currentTarget.style.borderColor="var(--bdr)";e.currentTarget.style.transform="translateY(0)";}}>
+                {/* Thumbnail ou ícone */}
+                {a.thumbnail?(
+                  <img src={a.thumbnail} alt="" style={{width:80,height:80,borderRadius:".5rem",objectFit:"cover",flexShrink:0,background:"var(--bdr)"}} onError={e=>{e.target.style.display="none";}}/>
+                ):(
+                  <div style={{width:80,height:80,borderRadius:".5rem",background:"linear-gradient(135deg,#4f5ef020,#8b44f020)",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,fontSize:"2rem"}}>
+                    {activeTab===0?"💉":activeTab===1?"💊":activeTab===2?"⚖️":activeTab===3?"🩺":"🥗"}
+                  </div>
+                )}
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{fontWeight:700,fontSize:".86rem",color:"var(--tx)",lineHeight:1.35,marginBottom:".4rem",display:"-webkit-box",WebkitLineClamp:2,WebkitBoxOrient:"vertical",overflow:"hidden"}}>
+                    {a.title}
+                  </div>
+                  {a.description&&(
+                    <div style={{fontSize:".74rem",color:"var(--tx4)",lineHeight:1.4,marginBottom:".4rem",display:"-webkit-box",WebkitLineClamp:2,WebkitBoxOrient:"vertical",overflow:"hidden"}}>
+                      {a.description}
+                    </div>
+                  )}
+                  <div style={{display:"flex",alignItems:"center",gap:".6rem",flexWrap:"wrap"}}>
+                    <span style={{fontSize:".65rem",fontWeight:600,color:"#4f5ef0",background:"#4f5ef015",borderRadius:"99px",padding:".1rem .45rem",border:"1px solid #4f5ef030"}}>
+                      {a.source}
+                    </span>
+                    {a.pubDate&&<span style={{fontSize:".64rem",color:"var(--sub)"}}>{fmtDate(a.pubDate)}</span>}
+                    <span style={{fontSize:".64rem",color:"var(--tx5)",marginLeft:"auto"}}>Ler mais →</span>
+                  </div>
+                </div>
+              </div>
+            </a>
+          ))}
+        </div>
+      )}
+
+      <style>{`@keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}`}</style>
+    </div>
+  );
+}
+
 // ─── APP PRINCIPAL ────────────────────────────────────────────────────────────
 export default function App(){
   // Tema
   const[dark,setDark]=useState(getTheme);
-  const toggle=()=>setDark(v=>{const nv=!v;setTheme(nv);document.body.classList.toggle("light",!nv);return nv;});
+  // Sincroniza classe do body com o estado — garante persistência no F5
+  useEffect(()=>{
+    document.body.classList.toggle("light",!dark);
+  },[dark]);
+  const toggle=()=>setDark(v=>{const nv=!v;setTheme(nv);return nv;});
 
   // Auth
   const[cu,setCU]=useState(null);
@@ -661,6 +843,7 @@ export default function App(){
     {id:"caixa",l:"Caixa",n:"cash"},
     {id:"clientes",l:"Clientes",n:"client"},
     {id:"produtos",l:"Produtos",n:"product"},
+    {id:"noticias",l:"Notícias",n:"info"},
     ...(isAdmin?[{id:"usuarios",l:"Usuários",n:"users"}]:[]),
   ];
 
@@ -1005,6 +1188,9 @@ export default function App(){
             ))}
           </div>
         </>)}
+
+        {/* ══ NOTÍCIAS ══ */}
+        {tab==="noticias"&&<NewsScreen dark={dark}/>}
 
         {/* ══ USUÁRIOS ══ */}
         {tab==="usuarios"&&isAdmin&&(<>
