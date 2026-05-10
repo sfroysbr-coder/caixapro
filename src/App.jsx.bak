@@ -176,12 +176,8 @@ const Donut=({segs=[],size=80})=>{
 
 // ─── TELA LOGIN ───────────────────────────────────────────────────────────────
 function LoginScreen({onLogin,dark}){
-  const[user,setUser]   = useState("");
-  const[pw_,setPw]      = useState("");
-  const[show,setShow]   = useState(false);
-  const[error,setErr]   = useState("");
-  const[shk,setShk]     = useState(false);
-  const[loading,setLoad]= useState(false);
+  const[user,setUser]=useState(""),pass=useState(""),pw=useState(false),err=useState(""),shake=useState(false),load=useState(false);
+  const[pw_,setPw]=pass,[show,setShow]=pw,[error,setErr]=err,[shk,setShk]=shake,[loading,setLoad]=load;
 
   const attempt=async()=>{
     if(!user.trim()||!pw_){setErr("Preencha usuário e senha.");return;}
@@ -525,13 +521,10 @@ export default function App(){
     const qty=parseInt(sf.quantity)||1,up=parseFloat(sf.unit_price)||0,total=up*qty;
     if(prod.stock_qty<qty){toast$(`Estoque insuficiente! Disponível: ${prod.stock_qty} ${prod.unit||"un"}.`,"#f56565");return;}
     const sid=uid();
-    try{
-      const{error:e}=await supabase.from("sales").insert([{id:sid,product_id:sf.product_id,product_name:sf.product_name,client_id:sf.client_id||null,client_name:sf.client_name||null,quantity:qty,unit_price:up,total_price:total,notes:sf.notes||null,payment_method:sf.payment_method,added_by:cu.display_name,date:today()}]);
-      if(e){toast$("Erro ao registrar venda: "+e.message,"#f56565");return;}
-      await supabase.from("products").update({stock_qty:prod.stock_qty-qty}).eq("id",sf.product_id);
-      await supabase.from("cash_transactions").insert([{id:uid(),description:`Venda · ${sf.product_name}${sf.client_name?` · ${sf.client_name}`:""}`,value:total,type:"entrada",category:"Venda",sale_id:sid,product_name:sf.product_name,added_by:cu.display_name,date:today()}]);
-      toast$(`✅ Venda de ${qty} ${prod.unit||"un"} registrada!`);setModal(null);setSf(FS);
-    }catch(ex){toast$("Erro de conexão.","#f56565");}
+    await supabase.from("sales").insert([{id:sid,product_id:sf.product_id,product_name:sf.product_name,client_id:sf.client_id||null,client_name:sf.client_name||null,quantity:qty,unit_price:up,total_price:total,notes:sf.notes,payment_method:sf.payment_method,added_by:cu.display_name,date:today()}]);
+    await supabase.from("products").update({stock_qty:prod.stock_qty-qty}).eq("id",sf.product_id);
+    await supabase.from("cash_transactions").insert([{id:uid(),description:`Venda · ${sf.product_name}${sf.client_name?` · ${sf.client_name}`:""}`,value:total,type:"entrada",category:"Venda",sale_id:sid,product_name:sf.product_name,added_by:cu.display_name,date:today()}]);
+    toast$(`✅ Venda de ${qty} ${prod.unit||"un"} registrada!`);setModal(null);setSf(FS);
   };
   const updateSale=async()=>{
     if(!editing)return;
@@ -556,11 +549,8 @@ export default function App(){
       const prod=products.find(p=>p.id===cashF.product_id);const qty=parseInt(cashF.quantity)||0;
       if(prod&&qty>0){if(prod.stock_qty<qty){toast$("Estoque insuficiente!","#f56565");return;}await supabase.from("products").update({stock_qty:prod.stock_qty-qty}).eq("id",cashF.product_id);}
     }
-    try{
-      const{error:e}=await supabase.from("cash_transactions").insert([{id:uid(),description:cashF.description,value:parseFloat(cashF.value),type:cashF.type,category:cashF.category||null,product_name:cashF.product_id?products.find(p=>p.id===cashF.product_id)?.name:null,added_by:cu.display_name,date:today()}]);
-      if(e){toast$("Erro ao salvar: "+e.message,"#f56565");return;}
-      toast$("Lançamento adicionado!");setModal(null);setCashF(FCash);
-    }catch(ex){toast$("Erro de conexão.","#f56565");}
+    await supabase.from("cash_transactions").insert([{id:uid(),description:cashF.description,value:parseFloat(cashF.value),type:cashF.type,category:cashF.category,product_name:cashF.product_id?products.find(p=>p.id===cashF.product_id)?.name:null,added_by:cu.display_name,date:today()}]);
+    toast$("Lançamento adicionado!");setModal(null);setCashF(FCash);
   };
   const updateCash=async()=>{
     if(!editing)return;
@@ -573,11 +563,8 @@ export default function App(){
     if(!pf.name||!pf.cost_per_unit||!pf.price_per_unit){toast$("Preencha nome, custo e preço.","#f56565");return;}
     const{markup,margin,profit}=calcM(pf.cost_per_unit,pf.price_per_unit);
     const sup=suppliers.find(s=>s.id===pf.supplier_id);
-    try{
-      const{error:e}=await supabase.from("products").insert([{id:uid(),code:pf.code||`PRD-${uid().slice(0,4).toUpperCase()}`,name:pf.name,description:pf.description||null,category:pf.category,unit:pf.unit||"un",cost_per_unit:parseFloat(pf.cost_per_unit),price_per_unit:parseFloat(pf.price_per_unit),units_per_pack:parseInt(pf.units_per_pack)||1,batch:pf.batch||null,expiry:pf.expiry||null,stock_qty:parseInt(pf.stock_qty)||0,min_stock:parseInt(pf.min_stock)||5,supplier_id:pf.supplier_id||null,supplier_name:sup?.name||null,markup,margin,profit,added_by:cu.display_name}]);
-      if(e){toast$("Erro ao salvar: "+e.message,"#f56565");return;}
-      toast$("Produto cadastrado!");setModal(null);setPf(FP);
-    }catch(ex){toast$("Erro de conexão: "+ex.message,"#f56565");}
+    await supabase.from("products").insert([{id:uid(),code:pf.code||`PRD-${uid().slice(0,4).toUpperCase()}`,name:pf.name,description:pf.description,category:pf.category,unit:pf.unit||"un",cost_per_unit:parseFloat(pf.cost_per_unit),price_per_unit:parseFloat(pf.price_per_unit),units_per_pack:parseInt(pf.units_per_pack)||1,batch:pf.batch,expiry:pf.expiry||null,stock_qty:parseInt(pf.stock_qty)||0,min_stock:parseInt(pf.min_stock)||5,supplier_id:pf.supplier_id||null,supplier_name:sup?.name||null,markup,margin,profit,added_by:cu.display_name}]);
+    toast$("Produto cadastrado!");setModal(null);setPf(FP);
   };
   const saveProduct=async()=>{
     const{markup,margin,profit}=calcM(editing.cost_per_unit,editing.price_per_unit);
@@ -587,36 +574,19 @@ export default function App(){
   };
   const delProduct=async id=>{await supabase.from("products").delete().eq("id",id);toast$("Removido.","#f59e0b");setModal(null);setEditing(null);};
 
-  const addClient=async()=>{
-    if(!cf.name){toast$("Nome é obrigatório.","#f56565");return;}
-    try{
-      const{error:e}=await supabase.from("clients").insert([{id:uid(),name:cf.name,email:cf.email||null,phone:cf.phone||null,notes:cf.notes||null,added_by:cu.display_name}]);
-      if(e){toast$("Erro ao salvar: "+e.message,"#f56565");return;}
-      toast$("Cliente cadastrado!");setModal(null);setCf(FC);
-    }catch(ex){toast$("Erro de conexão.","#f56565");}
-  };
+  const addClient=async()=>{if(!cf.name)return;await supabase.from("clients").insert([{id:uid(),...cf,added_by:cu.display_name}]);toast$("Cliente cadastrado!");setModal(null);setCf(FC);};
   const saveClient=async()=>{await supabase.from("clients").update({name:editing.name,email:editing.email,phone:editing.phone,notes:editing.notes}).eq("id",editing.id);toast$("Cliente atualizado!");setModal(null);setEditing(null);};
   const delClient=async id=>{await supabase.from("clients").delete().eq("id",id);toast$("Removido.","#f59e0b");};
 
-  const addSupp=async()=>{
-    if(!supf.name){toast$("Nome obrigatório.","#f56565");return;}
-    try{
-      const{error:e}=await supabase.from("suppliers").insert([{id:uid(),name:supf.name,contact:supf.contact||null,phone:supf.phone||null,email:supf.email||null,notes:supf.notes||null,added_by:cu.display_name}]);
-      if(e){toast$("Erro ao salvar: "+e.message,"#f56565");return;}
-      toast$("Fornecedor cadastrado!");setModal(null);setSupf(FSup);
-    }catch(ex){toast$("Erro de conexão.","#f56565");}
-  };
+  const addSupp=async()=>{if(!supf.name){toast$("Nome obrigatório.","#f56565");return;}await supabase.from("suppliers").insert([{id:uid(),...supf,added_by:cu.display_name}]);toast$("Fornecedor cadastrado!");setModal(null);setSupf(FSup);};
   const saveSupp=async()=>{await supabase.from("suppliers").update({name:editing.name,contact:editing.contact,phone:editing.phone,email:editing.email,notes:editing.notes}).eq("id",editing.id);toast$("Fornecedor atualizado!");setModal(null);setEditing(null);};
 
   const addUser=async()=>{
     if(!uf.username||!uf.display_name||!uf.password)return;
     if(uf.password!==uf.password2){toast$("Senhas não coincidem.","#f56565");return;}
     if(uf.password.length<6){toast$("Mínimo 6 caracteres.","#f59e0b");return;}
-    try{
-      const{error:e}=await supabase.from("app_users").insert([{id:uid(),username:uf.username.trim().toLowerCase(),display_name:uf.display_name,role:uf.role,password_hash:hashPw(uf.password),active:true}]);
-      if(e){toast$(e.message.includes("duplicate")?"Usuário já existe!":"Erro: "+e.message,"#f56565");return;}
-      toast$("Usuário criado!");setModal(null);setUf(FU);
-    }catch(ex){toast$("Erro de conexão.","#f56565");}
+    const{error}=await supabase.from("app_users").insert([{id:uid(),username:uf.username.trim().toLowerCase(),display_name:uf.display_name,role:uf.role,password_hash:hashPw(uf.password),active:true}]);
+    if(!error){toast$("Usuário criado!");setModal(null);setUf(FU);}else toast$("Erro. Usuário já existe?","#f56565");
   };
   const saveUser=async()=>{
     const updates={display_name:editing.display_name,role:editing.role,active:editing.active};
