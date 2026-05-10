@@ -1,8 +1,8 @@
 [build]
-  base = "caixapro"
+  base = "caixapro5"
   command = "npm run build"
-  publish = "caixapro/build"
-  functions = "caixapro/netlify/functions"
+  publish = "caixapro5/build"
+  functions = "caixapro5/netlify/functions"
 
 [[redirects]]
   from = "/*"
