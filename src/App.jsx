@@ -415,178 +415,172 @@ function Analytics({onClose,sales,cashTx,products,clients,dark}){
 
 
 // ─── TELA DE NOTÍCIAS ────────────────────────────────────────────────────────
-const NEWS_FEEDS = [
-  {label:"Tirzepatida",    q:"tirzepatida"},
-  {label:"Mounjaro",       q:"mounjaro+tirzepatida"},
-  {label:"Emagrecimento",  q:"emagrecimento+medicamento"},
-  {label:"Ozempic/GLP-1",  q:"ozempic+semaglutida+emagrecimento"},
-  {label:"Saúde & Dieta",  q:"saúde+alimentação+emagrecer"},
+const NEWS_CATS = [
+  {key:"tirzepatida",  label:"💉 Tirzepatida",   emoji:"💉"},
+  {key:"mounjaro",     label:"💊 Mounjaro",       emoji:"💊"},
+  {key:"emagrecimento",label:"⚖️ Emagrecimento",  emoji:"⚖️"},
+  {key:"glp1",         label:"🩺 Ozempic/GLP-1",  emoji:"🩺"},
+  {key:"saude",        label:"🥗 Saúde & Dieta",  emoji:"🥗"},
 ];
 
-function NewsScreen({dark}){
+function NewsScreen(){
   const[articles,setArticles]=useState([]);
   const[loading,setLoading]=useState(false);
   const[error,setError]=useState(null);
-  const[activeTab,setActiveTab]=useState(0);
+  const[cat,setCat]=useState("tirzepatida");
   const[lastUpdate,setLastUpdate]=useState(null);
 
-  const fetchNews=useCallback(async(tabIdx)=>{
+  const fetchNews=useCallback(async(category)=>{
     setLoading(true);setError(null);setArticles([]);
-    const q=NEWS_FEEDS[tabIdx].q;
-    // Usa o serviço rss2json para converter Google News RSS em JSON
-    const rssUrl=`https://news.google.com/rss/search?q=${encodeURIComponent(q)}&hl=pt-BR&gl=BR&ceid=BR:pt`;
-    const apiUrl=`https://api.rss2json.com/v1/api.json?rss_url=${encodeURIComponent(rssUrl)}&count=20`;
     try{
-      const r=await fetch(apiUrl);
+      const r=await fetch(`/.netlify/functions/news?category=${category}`);
+      if(!r.ok)throw new Error("Servidor indisponível ("+r.status+")");
       const data=await r.json();
-      if(data.status==="ok"&&data.items?.length>0){
-        setArticles(data.items.map(item=>({
-          title:item.title?.replace(/<[^>]*>/g,"").replace(/\s+-\s+.+$/,"").trim(),
-          link:item.link,
-          pubDate:item.pubDate,
-          source:item.author||new URL(item.link||"https://google.com").hostname.replace("www.",""),
-          thumbnail:item.thumbnail||null,
-          description:item.description?.replace(/<[^>]*>/g,"").slice(0,200)||"",
-        })));
+      if(data.ok&&data.items?.length>0){
+        setArticles(data.items);
         setLastUpdate(new Date().toLocaleTimeString("pt-BR"));
+      }else if(data.items?.length===0){
+        setError("Nenhuma notícia encontrada nesta categoria agora. Tente outra ou aguarde alguns minutos.");
       }else{
-        setError("Nenhuma notícia encontrada. Tente outra categoria.");
+        setError(data.error||"Erro ao buscar notícias.");
       }
     }catch(e){
-      // Fallback: tenta RSS direto do Google
-      try{
-        const rssR=await fetch(`https://api.allorigins.win/get?url=${encodeURIComponent(rssUrl)}`);
-        const rssData=await rssR.json();
-        // Parse XML básico
-        const parser=new DOMParser();
-        const xml=parser.parseFromString(rssData.contents,"text/xml");
-        const items=Array.from(xml.querySelectorAll("item")).slice(0,20);
-        if(items.length>0){
-          setArticles(items.map(item=>({
-            title:item.querySelector("title")?.textContent?.replace(/<[^>]*>/g,"").replace(/\s+-\s+.+$/,"").trim()||"Sem título",
-            link:item.querySelector("link")?.textContent||"#",
-            pubDate:item.querySelector("pubDate")?.textContent||"",
-            source:item.querySelector("source")?.textContent||"Google News",
-            thumbnail:null,
-            description:item.querySelector("description")?.textContent?.replace(/<[^>]*>/g,"").slice(0,200)||"",
-          })));
-          setLastUpdate(new Date().toLocaleTimeString("pt-BR"));
-        }else{
-          setError("Erro ao carregar. Verifique sua conexão.");
-        }
-      }catch(e2){
-        setError("Não foi possível carregar as notícias. Verifique sua conexão com a internet.");
-      }
+      setError("Erro: "+e.message+". Verifique se o deploy do Netlify está atualizado.");
     }
     setLoading(false);
   },[]);
 
-  useEffect(()=>{fetchNews(activeTab);},[activeTab,fetchNews]);
+  useEffect(()=>{fetchNews(cat);},[cat,fetchNews]);
 
   const fmtDate=d=>{
     if(!d)return"";
     try{
       const dt=new Date(d);
       const diff=Math.floor((new Date()-dt)/60000);
-      if(diff<60)return`${diff}min atrás`;
-      if(diff<1440)return`${Math.floor(diff/60)}h atrás`;
+      if(diff<1)return"agora";
+      if(diff<60)return diff+"min atrás";
+      if(diff<1440)return Math.floor(diff/60)+"h atrás";
       return dt.toLocaleDateString("pt-BR");
     }catch{return"";}
   };
 
+  const catObj=NEWS_CATS.find(c=>c.key===cat)||NEWS_CATS[0];
+
   return(
     <div style={{animation:"fadeUp .4s ease"}}>
-      {/* Header */}
+      {/* Cabeçalho */}
       <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:"1rem",flexWrap:"wrap",gap:".5rem"}}>
         <div>
-          <h2 style={{fontFamily:"'Syne',sans-serif",fontWeight:800,fontSize:"1.05rem",color:"var(--tx)"}}>📰 Notícias</h2>
-          <div style={{fontSize:".67rem",color:"var(--tx5)",marginTop:".1rem"}}>Feed ao vivo · Tirzepatida, Emagrecimento & Saúde</div>
+          <h2 style={{fontFamily:"'Syne',sans-serif",fontWeight:800,fontSize:"1.05rem",color:"var(--tx)"}}>
+            📰 Notícias
+          </h2>
+          <div style={{fontSize:".67rem",color:"var(--tx5)",marginTop:".1rem"}}>
+            Feed ao vivo · Tirzepatida, Emagrecimento & Saúde
+          </div>
         </div>
         <div style={{display:"flex",alignItems:"center",gap:".5rem"}}>
-          {lastUpdate&&<span style={{fontSize:".65rem",color:"var(--sub)"}}>Atualizado: {lastUpdate}</span>}
-          <button onClick={()=>fetchNews(activeTab)} disabled={loading} style={{display:"inline-flex",alignItems:"center",gap:".3rem",padding:".35rem .7rem",borderRadius:".4rem",background:"#4f5ef020",color:"#4f5ef0",border:"1px solid #4f5ef040",fontSize:".73rem",fontFamily:"'DM Sans',sans-serif",fontWeight:600}}>
-            <Ic n="sync" s={12}/>{loading?"Carregando...":"Atualizar"}
+          {lastUpdate&&<span style={{fontSize:".63rem",color:"var(--sub)"}}>🕐 {lastUpdate}</span>}
+          <button
+            onClick={()=>fetchNews(cat)}
+            disabled={loading}
+            style={{display:"inline-flex",alignItems:"center",gap:".3rem",padding:".35rem .75rem",borderRadius:".4rem",background:"#4f5ef020",color:"#4f5ef0",border:"1px solid #4f5ef040",fontSize:".73rem",fontFamily:"'DM Sans',sans-serif",fontWeight:600}}
+          >
+            <Ic n="sync" s={12}/>{loading?"Buscando...":"Atualizar"}
           </button>
         </div>
       </div>
 
-      {/* Tabs de categoria */}
+      {/* Abas de categoria */}
       <div style={{display:"flex",gap:".35rem",marginBottom:"1rem",overflowX:"auto",paddingBottom:".25rem"}}>
-        {NEWS_FEEDS.map((f,i)=>(
-          <button key={i} onClick={()=>{setActiveTab(i);}} style={{padding:".3rem .75rem",borderRadius:"99px",border:`1px solid ${activeTab===i?"#4f5ef0":"var(--bdr2)"}`,background:activeTab===i?"#4f5ef0":"transparent",color:activeTab===i?"#fff":"var(--navoff)",fontSize:".73rem",fontFamily:"'DM Sans',sans-serif",fontWeight:600,whiteSpace:"nowrap",transition:"all .2s"}}>
-            {f.label}
+        {NEWS_CATS.map(c=>(
+          <button key={c.key} onClick={()=>setCat(c.key)}
+            style={{padding:".3rem .75rem",borderRadius:"99px",border:`1px solid ${cat===c.key?"#4f5ef0":"var(--bdr2)"}`,background:cat===c.key?"#4f5ef0":"transparent",color:cat===c.key?"#fff":"var(--navoff)",fontSize:".72rem",fontFamily:"'DM Sans',sans-serif",fontWeight:600,whiteSpace:"nowrap",transition:"all .2s"}}>
+            {c.label}
           </button>
         ))}
       </div>
 
-      {/* Loading */}
+      {/* Skeleton loading */}
       {loading&&(
-        <div style={{display:"grid",gap:".75rem"}}>
-          {[1,2,3,4,5].map(i=>(
-            <div key={i} style={{background:"var(--card)",border:"1px solid var(--bdr)",borderRadius:".75rem",padding:"1rem",display:"flex",gap:".85rem",alignItems:"flex-start"}}>
-              <div style={{width:80,height:80,borderRadius:".5rem",background:"var(--bdr)",flexShrink:0,animation:"pulse 1.5s ease infinite"}}/>
-              <div style={{flex:1}}>
-                <div style={{height:14,background:"var(--bdr)",borderRadius:4,marginBottom:".5rem",animation:"pulse 1.5s ease infinite"}}/>
-                <div style={{height:14,background:"var(--bdr)",borderRadius:4,width:"75%",marginBottom:".5rem",animation:"pulse 1.5s ease infinite"}}/>
-                <div style={{height:11,background:"var(--bdr)",borderRadius:4,width:"40%",animation:"pulse 1.5s ease infinite"}}/>
+        <div style={{display:"grid",gap:".7rem"}}>
+          {[1,2,3,4,5,6].map(i=>(
+            <div key={i} style={{background:"var(--card)",border:"1px solid var(--bdr)",borderRadius:".75rem",padding:".9rem 1rem",display:"flex",gap:".85rem",alignItems:"flex-start"}}>
+              <div style={{width:76,height:76,borderRadius:".5rem",background:"var(--bdr)",flexShrink:0,animation:"newsSkl 1.4s ease infinite"}}/>
+              <div style={{flex:1,display:"flex",flexDirection:"column",gap:".4rem"}}>
+                <div style={{height:13,background:"var(--bdr)",borderRadius:3,animation:"newsSkl 1.4s ease infinite"}}/>
+                <div style={{height:13,background:"var(--bdr)",borderRadius:3,width:"80%",animation:"newsSkl 1.4s ease infinite"}}/>
+                <div style={{height:11,background:"var(--bdr)",borderRadius:3,width:"50%",marginTop:".2rem",animation:"newsSkl 1.4s ease infinite"}}/>
               </div>
             </div>
           ))}
+          <style>{`@keyframes newsSkl{0%,100%{opacity:.4}50%{opacity:.9}}`}</style>
         </div>
       )}
 
       {/* Erro */}
       {!loading&&error&&(
-        <div style={{background:"var(--card)",border:"1px solid #f59e0b40",borderRadius:".75rem",padding:"2rem",textAlign:"center"}}>
+        <div style={{background:"var(--card)",border:"1px solid #f59e0b40",borderRadius:".75rem",padding:"2rem 1.5rem",textAlign:"center"}}>
           <div style={{fontSize:"2.5rem",marginBottom:".75rem"}}>📡</div>
-          <div style={{color:"#f59e0b",fontWeight:700,fontSize:".88rem",marginBottom:".4rem"}}>Sem conexão com os feeds</div>
-          <div style={{color:"var(--tx5)",fontSize:".78rem",marginBottom:"1rem"}}>{error}</div>
-          <button onClick={()=>fetchNews(activeTab)} style={{padding:".5rem 1.1rem",borderRadius:".45rem",background:"linear-gradient(135deg,#4f5ef0,#8b44f0)",color:"#fff",border:"none",fontFamily:"'DM Sans',sans-serif",fontWeight:600,fontSize:".82rem"}}>
+          <div style={{color:"#f59e0b",fontWeight:700,fontSize:".9rem",marginBottom:".5rem"}}>Feed indisponível</div>
+          <div style={{color:"var(--tx5)",fontSize:".78rem",maxWidth:360,margin:"0 auto .35rem"}}>{error}</div>
+          <div style={{color:"var(--tx6)",fontSize:".7rem",marginBottom:"1.25rem"}}>
+            Certifique-se de que o deploy do Netlify incluiu o arquivo <code style={{background:"var(--pill)",padding:".1rem .35rem",borderRadius:".25rem",fontSize:".68rem"}}>netlify/functions/news.js</code>
+          </div>
+          <button onClick={()=>fetchNews(cat)}
+            style={{padding:".5rem 1.25rem",borderRadius:".45rem",background:"linear-gradient(135deg,#4f5ef0,#8b44f0)",color:"#fff",border:"none",fontFamily:"'DM Sans',sans-serif",fontWeight:600,fontSize:".83rem"}}>
             Tentar novamente
           </button>
         </div>
       )}
 
-      {/* Notícias */}
+      {/* Lista de notícias */}
       {!loading&&!error&&articles.length>0&&(
-        <div style={{display:"grid",gap:".75rem"}}>
+        <div style={{display:"grid",gap:".65rem"}}>
           {articles.map((a,i)=>(
-            <a key={i} href={a.link} target="_blank" rel="noopener noreferrer" style={{textDecoration:"none",display:"block"}}>
-              <div style={{background:"var(--card)",border:"1px solid var(--bdr)",borderRadius:".75rem",padding:"1rem",display:"flex",gap:".85rem",alignItems:"flex-start",transition:"border-color .2s, transform .15s",cursor:"pointer"}}
-                onMouseEnter={e=>{e.currentTarget.style.borderColor="#4f5ef0";e.currentTarget.style.transform="translateY(-2px)";}}
-                onMouseLeave={e=>{e.currentTarget.style.borderColor="var(--bdr)";e.currentTarget.style.transform="translateY(0)";}}>
-                {/* Thumbnail ou ícone */}
-                {a.thumbnail?(
-                  <img src={a.thumbnail} alt="" style={{width:80,height:80,borderRadius:".5rem",objectFit:"cover",flexShrink:0,background:"var(--bdr)"}} onError={e=>{e.target.style.display="none";}}/>
-                ):(
-                  <div style={{width:80,height:80,borderRadius:".5rem",background:"linear-gradient(135deg,#4f5ef020,#8b44f020)",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,fontSize:"2rem"}}>
-                    {activeTab===0?"💉":activeTab===1?"💊":activeTab===2?"⚖️":activeTab===3?"🩺":"🥗"}
-                  </div>
-                )}
+            <a key={i} href={a.link} target="_blank" rel="noopener noreferrer"
+              style={{textDecoration:"none",display:"block",borderRadius:".75rem",transition:"transform .15s"}}
+              onMouseEnter={e=>e.currentTarget.style.transform="translateY(-2px)"}
+              onMouseLeave={e=>e.currentTarget.style.transform="translateY(0)"}>
+              <div style={{background:"var(--card)",border:"1px solid var(--bdr)",borderRadius:".75rem",padding:".9rem 1rem",display:"flex",gap:".85rem",alignItems:"flex-start",transition:"border-color .2s"}}
+                onMouseEnter={e=>e.currentTarget.style.borderColor="#4f5ef0"}
+                onMouseLeave={e=>e.currentTarget.style.borderColor="var(--bdr)"}>
+                {/* Ícone categoria */}
+                <div style={{width:52,height:52,borderRadius:".6rem",background:"linear-gradient(135deg,#4f5ef015,#8b44f015)",border:"1px solid #4f5ef020",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"1.6rem",flexShrink:0}}>
+                  {catObj.emoji}
+                </div>
                 <div style={{flex:1,minWidth:0}}>
-                  <div style={{fontWeight:700,fontSize:".86rem",color:"var(--tx)",lineHeight:1.35,marginBottom:".4rem",display:"-webkit-box",WebkitLineClamp:2,WebkitBoxOrient:"vertical",overflow:"hidden"}}>
+                  <div style={{fontWeight:700,fontSize:".84rem",color:"var(--tx)",lineHeight:1.4,marginBottom:".3rem",display:"-webkit-box",WebkitLineClamp:2,WebkitBoxOrient:"vertical",overflow:"hidden"}}>
                     {a.title}
                   </div>
                   {a.description&&(
-                    <div style={{fontSize:".74rem",color:"var(--tx4)",lineHeight:1.4,marginBottom:".4rem",display:"-webkit-box",WebkitLineClamp:2,WebkitBoxOrient:"vertical",overflow:"hidden"}}>
+                    <div style={{fontSize:".73rem",color:"var(--tx4)",lineHeight:1.4,marginBottom:".35rem",display:"-webkit-box",WebkitLineClamp:2,WebkitBoxOrient:"vertical",overflow:"hidden"}}>
                       {a.description}
                     </div>
                   )}
-                  <div style={{display:"flex",alignItems:"center",gap:".6rem",flexWrap:"wrap"}}>
-                    <span style={{fontSize:".65rem",fontWeight:600,color:"#4f5ef0",background:"#4f5ef015",borderRadius:"99px",padding:".1rem .45rem",border:"1px solid #4f5ef030"}}>
-                      {a.source}
+                  <div style={{display:"flex",alignItems:"center",gap:".5rem",flexWrap:"wrap"}}>
+                    {a.source&&(
+                      <span style={{fontSize:".63rem",fontWeight:600,color:"#4f5ef0",background:"#4f5ef015",borderRadius:"99px",padding:".1rem .45rem",border:"1px solid #4f5ef030",maxWidth:140,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
+                        {a.source}
+                      </span>
+                    )}
+                    {a.date&&(
+                      <span style={{fontSize:".63rem",color:"var(--sub)"}}>{fmtDate(a.date)}</span>
+                    )}
+                    <span style={{fontSize:".63rem",color:"#4f5ef0",marginLeft:"auto",fontWeight:600}}>
+                      Ler matéria →
                     </span>
-                    {a.pubDate&&<span style={{fontSize:".64rem",color:"var(--sub)"}}>{fmtDate(a.pubDate)}</span>}
-                    <span style={{fontSize:".64rem",color:"var(--tx5)",marginLeft:"auto"}}>Ler mais →</span>
                   </div>
                 </div>
               </div>
             </a>
           ))}
+
+          {/* Rodapé */}
+          <div style={{textAlign:"center",padding:".75rem",fontSize:".68rem",color:"var(--tx6)"}}>
+            {articles.length} notícias · Fonte: Google News · <button onClick={()=>fetchNews(cat)} style={{background:"none",border:"none",color:"#4f5ef0",cursor:"pointer",fontSize:".68rem",fontFamily:"'DM Sans',sans-serif",fontWeight:600}}>Atualizar</button>
+          </div>
         </div>
       )}
-
-      <style>{`@keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}`}</style>
     </div>
   );
 }
