@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8"/>
+    <meta name="viewport" content="width=device-width,initial-scale=1"/>
+    <meta name="description" content="CaixaPro - Gestão Tirzepatida"/>
+    <link rel="manifest" href="/manifest.json"/>
+    <title>CaixaPro</title>
+    <style>
+      /* ── CSS VARIABLES — DARK (default) ── */
+      :root {
+        --bg:       #080a14;
+        --bg2:      #0b0d1a;
+        --bg3:      #0d0f1a;
+        --bg4:      #12141f;
+        --card:     #0d0f1a;
+        --input:    #12141f;
+        --pill:     #080a14;
+        --border:   #1e2130;
+        --border2:  #252840;
+        --text:     #e8eaf6;
+        --text2:    #c4c8e8;
+        --text3:    #8b8fa8;
+        --text4:    #666a88;
+        --text5:    #44475a;
+        --text6:    #333550;
+        --sub:      #555870;
+        --sep:      #151728;
+        --shadow:   rgba(0,0,0,0.6);
+        --nav-on:   #4f5ef0;
+        --nav-off:  #666a88;
+        --glow1:    #4f5ef022;
+        --glow2:    #10b98118;
+        --login-card: linear-gradient(160deg,#0e1020,#090b16);
+        --info-box: #080a18;
+        --sum-box:  #080a18;
+        --analytics-card: linear-gradient(135deg,#0e1030,#0d0f1a);
+        --analytics-border: #2a2d58;
+      }
+
+      /* ── CSS VARIABLES — LIGHT ── */
+      body.light {
+        --bg:       #f0f4ff;
+        --bg2:      #ffffff;
+        --bg3:      #ffffff;
+        --bg4:      #f5f7ff;
+        --card:     #ffffff;
+        --input:    #f0f4ff;
+        --pill:     #eef1ff;
+        --border:   #dde1f5;
+        --border2:  #c8ceee;
+        --text:     #1a1d3a;
+        --text2:    #2d3060;
+        --text3:    #555880;
+        --text4:    #6668a0;
+        --text5:    #8890b0;
+        --text6:    #aab0cc;
+        --sub:      #7780aa;
+        --sep:      #e8ecf8;
+        --shadow:   rgba(60,80,200,0.12);
+        --nav-on:   #4f5ef0;
+        --nav-off:  #7780aa;
+        --glow1:    #4f5ef015;
+        --glow2:    #10b98110;
+        --login-card: #ffffff;
+        --info-box: #eef1ff;
+        --sum-box:  #eef1ff;
+        --analytics-card: linear-gradient(135deg,#eef1ff,#f5f7ff);
+        --analytics-border: #c8ceee;
+      }
+
+      /* ── BASE RESET ── */
+      *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+      body {
+        background: var(--bg);
+        color: var(--text);
+        font-family: 'DM Sans', sans-serif;
+        transition: background 0.3s, color 0.3s;
+        min-height: 100vh;
+      }
+      ::-webkit-scrollbar { width: 4px; height: 4px; }
+      ::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 2px; }
+      input:focus, select:focus { outline: 2px solid #4f5ef0; outline-offset: -1px; }
+      button { cursor: pointer; transition: opacity 0.15s; }
+      button:hover:not(:disabled) { opacity: 0.85; }
+    </style>
+    <script>
+      // Apply saved theme BEFORE paint — prevents any flash
+      (function() {
+        try {
+          if (localStorage.getItem('cpro:theme') === 'light') {
+            document.body.classList.add('light');
+          }
+        } catch(e) {}
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+  </body>
+</html>
