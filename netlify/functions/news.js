@@ -1,86 +1,97 @@
-// Netlify Function — busca RSS do Google News no servidor (sem CORS)
 const https = require("https");
-const http  = require("http");
 
-const fetchUrl = (url) =>
-  new Promise((resolve, reject) => {
-    const lib = url.startsWith("https") ? https : http;
-    const req = lib.get(url, { headers: { "User-Agent": "Mozilla/5.0 CaixaProBot/1.0" } }, (res) => {
-      // Seguir redirect
+function get(url) {
+  return new Promise((resolve, reject) => {
+    const req = https.get(url, {
+      headers: {
+        "User-Agent": "Mozilla/5.0 (compatible; CaixaProBot/1.0)",
+        "Accept": "application/rss+xml, application/xml, text/xml, */*",
+      },
+    }, (res) => {
       if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-        return fetchUrl(res.headers.location).then(resolve).catch(reject);
+        return get(res.headers.location).then(resolve).catch(reject);
       }
-      let data = "";
-      res.on("data", (chunk) => (data += chunk));
-      res.on("end", () => resolve(data));
+      if (res.statusCode !== 200) {
+        return reject(new Error("HTTP " + res.statusCode));
+      }
+      const chunks = [];
+      res.on("data", c => chunks.push(c));
+      res.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
     });
     req.on("error", reject);
-    req.setTimeout(8000, () => { req.destroy(); reject(new Error("Timeout")); });
+    req.setTimeout(10000, () => { req.destroy(); reject(new Error("Timeout")); });
   });
+}
 
-const parseRSS = (xml) => {
-  const items = [];
-  const itemMatches = xml.match(/<item>([\s\S]*?)<\/item>/g) || [];
+function tag(xml, name) {
+  const re = new RegExp(`<${name}[^>]*>(?:<!\\[CDATA\\[)?([\\s\\S]*?)(?:\\]\\]>)?<\\/${name}>`, "i");
+  const m = xml.match(re);
+  return m ? m[1].replace(/<[^>]*>/g, "").trim() : "";
+}
 
-  for (const item of itemMatches.slice(0, 15)) {
-    const get = (tag) => {
-      const m = item.match(new RegExp(`<${tag}(?:[^>]*)?><!\\[CDATA\\[([\\s\\S]*?)\\]\\]><\\/${tag}>|<${tag}(?:[^>]*)?>([\\s\\S]*?)<\\/${tag}>`));
-      return m ? (m[1] || m[2] || "").trim() : "";
-    };
-
-    const title  = get("title").replace(/<[^>]*>/g, "").replace(/\s+-\s+.+$/, "").trim();
-    const link   = get("link") || get("guid");
-    const date   = get("pubDate");
-    const source = get("source") || "";
-    const desc   = get("description").replace(/<[^>]*>/g, "").slice(0, 250).trim();
-
-    if (title && link) {
-      items.push({ title, link, date, source, description: desc });
-    }
-  }
-  return items;
-};
+function parseRSS(xml) {
+  const blocks = xml.match(/<item[\s\S]*?<\/item>/g) || [];
+  return blocks.slice(0, 18).map(b => {
+    const title  = tag(b, "title").replace(/\s+-\s+[\w\s]+$/, "").trim();
+    const link   = tag(b, "link") || tag(b, "guid");
+    const date   = tag(b, "pubDate");
+    const source = tag(b, "source") || "";
+    const desc   = tag(b, "description").slice(0, 220).trim();
+    return { title, link, date, source, description: desc };
+  }).filter(i => i.title && i.link);
+}
 
 const QUERIES = {
-  tirzepatida:  "tirzepatida",
-  mounjaro:     "mounjaro+tirzepatida+injetável",
-  emagrecimento:"emagrecimento+medicamento+tratamento",
-  glp1:         "ozempic+semaglutida+GLP-1+emagrecimento",
-  saude:        "saúde+alimentação+dieta+emagrecer",
+  tirzepatida:   "tirzepatida+medicamento",
+  mounjaro:      "mounjaro+tirzepatida",
+  emagrecimento: "emagrecimento+medicamento+tratamento",
+  glp1:          "ozempic+semaglutida+GLP-1",
+  saude:         "saude+alimentacao+dieta+emagrecer",
 };
 
 exports.handler = async (event) => {
-  const headers = {
-    "Access-Control-Allow-Origin":  "*",
+  const H = {
+    "Access-Control-Allow-Origin": "*",
     "Access-Control-Allow-Headers": "Content-Type",
     "Content-Type": "application/json",
   };
+  if (event.httpMethod === "OPTIONS") return { statusCode: 200, headers: H };
 
-  if (event.httpMethod === "OPTIONS") return { statusCode: 200, headers };
+  const cat   = (event.queryStringParameters || {}).category || "tirzepatida";
+  const query = QUERIES[cat] || QUERIES.tirzepatida;
 
-  const category = event.queryStringParameters?.category || "tirzepatida";
-  const query    = QUERIES[category] || QUERIES.tirzepatida;
+  const urls = [
+    `https://news.google.com/rss/search?q=${encodeURIComponent(query)}&hl=pt-BR&gl=BR&ceid=BR:pt`,
+    `https://news.google.com/rss/search?q=${encodeURIComponent(query)}&hl=pt`,
+    `https://news.google.com/rss/search?q=${encodeURIComponent(query)}`,
+  ];
 
-  try {
-    const rssUrl = `https://news.google.com/rss/search?q=${encodeURIComponent(query)}&hl=pt-BR&gl=BR&ceid=BR:pt`;
-    const xml    = await fetchUrl(rssUrl);
+  let items = [];
+  let lastErr = "";
 
-    if (!xml || xml.length < 100) {
-      return { statusCode: 200, headers, body: JSON.stringify({ ok: false, error: "Feed vazio", items: [] }) };
+  for (const url of urls) {
+    try {
+      const xml = await get(url);
+      if (xml && xml.includes("<item>")) {
+        items = parseRSS(xml);
+        if (items.length > 0) break;
+      }
+    } catch (e) {
+      lastErr = e.message;
     }
+  }
 
-    const items = parseRSS(xml);
-
+  if (items.length === 0) {
     return {
       statusCode: 200,
-      headers,
-      body: JSON.stringify({ ok: true, category, query, count: items.length, items }),
-    };
-  } catch (err) {
-    return {
-      statusCode: 200,
-      headers,
-      body: JSON.stringify({ ok: false, error: err.message, items: [] }),
+      headers: H,
+      body: JSON.stringify({ ok: false, error: lastErr || "Sem resultados", items: [] }),
     };
   }
+
+  return {
+    statusCode: 200,
+    headers: H,
+    body: JSON.stringify({ ok: true, cat, count: items.length, items }),
+  };
 };

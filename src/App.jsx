@@ -1,4 +1,4 @@
-import{useState,useEffect,useCallback,useMemo}from"react";
+import React,{useState,useEffect,useCallback,useMemo}from"react";
 import{supabase}from"./supabase";
 
 // ─── HELPERS ──────────────────────────────────────────────────────────────────
@@ -626,6 +626,14 @@ export default function App(){
 
   // Forms defaults
   const FP={code:"",name:"",description:"",category:"tirzepatida",unit:"ampola",cost_per_unit:"",price_per_unit:"",units_per_pack:"1",batch:"",expiry:"",stock_qty:"0",min_stock:"5",supplier_id:""};
+  // ── CART STATE ──
+  const newCartItem=()=>({key:uid(),product_id:"",product_name:"",unit:"un",quantity:1,unit_price:0});
+  const[cartItems,setCartItems]=useState([newCartItem()]);
+  const[cartClient,setCartClient]=useState({id:"",name:""});
+  const[cartPayment,setCartPayment]=useState("PIX");
+  const[cartNotes,setCartNotes]=useState("");
+  const[cartFreight,setCartFreight]=useState("");
+  // legado (para editSale)
   const FS={product_id:"",product_name:"",client_id:"",client_name:"",quantity:"1",unit_price:"",total_price:"",notes:"",payment_method:"PIX"};
   const FC={name:"",email:"",phone:"",notes:""};
   const FU={username:"",display_name:"",role:"operator",password:"",password2:""};
@@ -634,7 +642,7 @@ export default function App(){
   const FSt={product_id:"",qty:"",cost_total:"",notes:""};
 
   const[pf,setPf]=useState(FP);
-  const[sf,setSf]=useState(FS);
+  const[sf,setSf]=useState(FS); // usado em editSale
   const[cf,setCf]=useState(FC);
   const[uf,setUf]=useState(FU);
   const[supf,setSupf]=useState(FSup);
@@ -684,30 +692,122 @@ export default function App(){
   const canEdit=cu?.role==="admin"||cu?.role==="operator";
 
   // Sale handlers
-  const onSaleProd=id=>{
-    const p=products.find(x=>x.id===id);
-    if(!p){setSf(f=>({...f,product_id:"",product_name:"",unit_price:"",total_price:""}));return;}
-    const up=p.price_per_unit||0;
-    setSf(f=>({...f,product_id:id,product_name:p.name,unit_price:String(up),total_price:String(up*(parseInt(f.quantity)||1))}));
+  // ── CART HELPERS ──
+  const cartSetProd=(key,pid)=>{
+    const p=products.find(x=>x.id===pid);
+    setCartItems(items=>items.map(i=>i.key!==key?i:{...i,
+      product_id:pid,
+      product_name:p?p.name:"",
+      unit:p?p.unit||"un":"un",
+      unit_price:p?parseFloat(p.price_per_unit)||0:0,
+    }));
   };
-  const onSaleQty=q=>{const qty=Math.max(1,parseInt(q)||1);setSf(f=>({...f,quantity:String(qty),total_price:String((parseFloat(f.unit_price)||0)*qty)}));};
-  const onSalePrice=v=>{setSf(f=>({...f,unit_price:v,total_price:String((parseFloat(v)||0)*(parseInt(f.quantity)||1))}));};
+  const cartSetQty=(key,val)=>{
+    const qty=Math.max(1,parseInt(val)||1);
+    setCartItems(items=>items.map(i=>i.key!==key?i:{...i,quantity:qty}));
+  };
+  const cartSetPrice=(key,val)=>{
+    setCartItems(items=>items.map(i=>i.key!==key?i:{...i,unit_price:parseFloat(val)||0}));
+  };
+  const cartAddLine=()=>setCartItems(items=>[...items,newCartItem()]);
+  const cartRemoveLine=key=>setCartItems(items=>items.length>1?items.filter(i=>i.key!==key):items);
+  const cartReset=()=>{setCartItems([newCartItem()]);setCartClient({id:"",name:""});setCartPayment("PIX");setCartNotes("");setCartFreight("");};
+
+  const cartSubtotal=cartItems.reduce((a,i)=>a+i.unit_price*i.quantity,0);
+  const cartFreightVal=parseFloat(cartFreight)||0;
+  const cartTotal=cartSubtotal+cartFreightVal;
 
   // CRUD
   const registerSale=async()=>{
-    if(!sf.product_id||!sf.unit_price){toast$("Preencha produto e preço.","#f56565");return;}
-    const prod=products.find(p=>p.id===sf.product_id);
-    if(!prod){toast$("Produto não encontrado.","#f56565");return;}
-    const qty=parseInt(sf.quantity)||1,up=parseFloat(sf.unit_price)||0,total=up*qty;
-    if(prod.stock_qty<qty){toast$(`Estoque insuficiente! Disponível: ${prod.stock_qty} ${prod.unit||"un"}.`,"#f56565");return;}
-    const sid=uid();
+    // Validações
+    const validItems=cartItems.filter(i=>i.product_id&&i.unit_price>0&&i.quantity>0);
+    if(validItems.length===0){toast$("Adicione pelo menos 1 produto com preço.","#f56565");return;}
+
+    // Verificar estoque de todos os itens
+    for(const item of validItems){
+      const prod=products.find(p=>p.id===item.product_id);
+      if(!prod){toast$(`Produto não encontrado: ${item.product_name}`,"#f56565");return;}
+      if(prod.stock_qty<item.quantity){
+        toast$(`Estoque insuficiente: ${prod.name} (disponível: ${prod.stock_qty} ${prod.unit||"un"})`,"#f56565");return;
+      }
+    }
+
+    const batchId=uid(); // ID do grupo desta venda
+    const clientName=cartClient.name||null;
+    const clientId=cartClient.id||null;
+    const freight=parseFloat(cartFreight)||0;
+    const subtotal=validItems.reduce((a,i)=>a+i.unit_price*i.quantity,0);
+    const grandTotal=subtotal+freight;
+    const desc=validItems.map(i=>`${i.product_name}(${i.quantity})`).join(", ");
+
     try{
-      const{error:e}=await supabase.from("sales").insert([{id:sid,product_id:sf.product_id,product_name:sf.product_name,client_id:sf.client_id||null,client_name:sf.client_name||null,quantity:qty,unit_price:up,total_price:total,notes:sf.notes||null,payment_method:sf.payment_method,added_by:cu.display_name,date:today()}]);
-      if(e){toast$("Erro ao registrar venda: "+e.message,"#f56565");return;}
-      await supabase.from("products").update({stock_qty:prod.stock_qty-qty}).eq("id",sf.product_id);
-      await supabase.from("cash_transactions").insert([{id:uid(),description:`Venda · ${sf.product_name}${sf.client_name?` · ${sf.client_name}`:""}`,value:total,type:"entrada",category:"Venda",sale_id:sid,product_name:sf.product_name,added_by:cu.display_name,date:today()}]);
-      toast$(`✅ Venda de ${qty} ${prod.unit||"un"} registrada!`);setModal(null);setSf(FS);
-    }catch(ex){toast$("Erro de conexão.","#f56565");}
+      // 1. Inserir cada item como registro de venda
+      const saleRecords=validItems.map(i=>({
+        id:uid(),
+        product_id:i.product_id,
+        product_name:i.product_name,
+        client_id:clientId,
+        client_name:clientName,
+        quantity:i.quantity,
+        unit_price:i.unit_price,
+        total_price:i.unit_price*i.quantity,
+        notes:cartNotes||null,
+        payment_method:cartPayment,
+        added_by:cu.display_name,
+        date:today(),
+        // batch_id para agrupar itens da mesma venda
+        batch_id:batchId,
+      }));
+
+      const{error:e1}=await supabase.from("sales").insert(saleRecords);
+      if(e1){toast$("Erro ao registrar venda: "+e1.message,"#f56565");return;}
+
+      // 2. Baixar estoque de cada produto
+      for(const item of validItems){
+        const prod=products.find(p=>p.id===item.product_id);
+        if(prod){
+          await supabase.from("products")
+            .update({stock_qty:prod.stock_qty-item.quantity})
+            .eq("id",item.product_id);
+        }
+      }
+
+      // 3. Lançar UMA entrada no caixa com o total geral
+      const cashLines=[{
+        id:uid(),
+        description:`Venda${clientName?` · ${clientName}`:""}${freight>0?" (c/ frete)":""} · ${desc}`,
+        value:grandTotal,
+        type:"entrada",
+        category:"Venda",
+        sale_id:batchId,
+        product_name:validItems.map(i=>i.product_name).join(", "),
+        added_by:cu.display_name,
+        date:today(),
+      }];
+
+      // 4. Se tem frete, lança como informação adicional no caixa
+      if(freight>0){
+        cashLines.push({
+          id:uid(),
+          description:`Frete/Entrega${clientName?` · ${clientName}`:""}`,
+          value:freight,
+          type:"entrada",
+          category:"Frete",
+          sale_id:batchId,
+          product_name:null,
+          added_by:cu.display_name,
+          date:today(),
+        });
+      }
+
+      // Usar apenas 1 lançamento de caixa (total geral incluindo frete)
+      const{error:e2}=await supabase.from("cash_transactions").insert([cashLines[0]]);
+      if(e2){toast$("Aviso: venda registrada mas erro no caixa: "+e2.message,"#f59e0b");}
+
+      toast$(`✅ Venda registrada! ${validItems.length} produto(s) · Total: ${fmt(grandTotal)}`);
+      setModal(null);
+      cartReset();
+    }catch(ex){toast$("Erro de conexão: "+ex.message,"#f56565");}
   };
   const updateSale=async()=>{
     if(!editing)return;
@@ -1220,23 +1320,173 @@ export default function App(){
 
     {/* ══ MODAIS ══ */}
 
-    {/* Nova venda */}
+    {/* Nova venda — CARRINHO */}
     {modal==="sale"&&(
-      <Modal title="Registrar Venda" onClose={()=>setModal(null)} icon="sales" wide>
-        <div style={{background:"var(--infobox)",borderRadius:".45rem",padding:".55rem .8rem",marginBottom:".8rem",fontSize:".73rem",color:"#4f5ef0",display:"flex",gap:".3rem",alignItems:"center"}}><Ic n="info" s={12}/>Venda baixa estoque e lança no caixa automaticamente</div>
-        <Sel label="Produto *" value={sf.product_id} onChange={e=>onSaleProd(e.target.value)}>
-          <option value="">Selecione o produto...</option>
-          {products.map(p=><option key={p.id} value={p.id}>{CATS[p.category]||"📋"} {p.name} — Estoque: {p.stock_qty} {p.unit||"un"}</option>)}
-        </Sel>
-        <R2><Inp label="Quantidade *" type="number" min="1" value={sf.quantity} onChange={e=>onSaleQty(e.target.value)}/><Inp label="Preço unit. (R$) *" type="number" min="0" step="0.01" value={sf.unit_price} onChange={e=>onSalePrice(e.target.value)}/></R2>
-        {sf.product_id&&<div style={{background:"var(--pill)",borderRadius:".45rem",padding:".65rem",marginBottom:".8rem",display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:".45rem",textAlign:"center"}}>
-          {[{l:"Quantidade",v:`${sf.quantity} un`,c:"var(--tx)"},{l:"Preço unit.",v:fmt(parseFloat(sf.unit_price)||0),c:"#4f5ef0"},{l:"Total",v:fmt(parseFloat(sf.total_price)||0),c:"#10b981"}].map(m=><div key={m.l}><div style={{fontSize:".58rem",color:"var(--sub)",textTransform:"uppercase",marginBottom:".12rem"}}>{m.l}</div><div style={{fontSize:".95rem",fontWeight:700,color:m.c,fontFamily:"'Syne',sans-serif"}}>{m.v}</div></div>)}
-        </div>}
-        <Sel label="Cliente" hint="opcional" value={sf.client_id} onChange={e=>{const c=clients.find(x=>x.id===e.target.value);setSf(f=>({...f,client_id:e.target.value,client_name:c?.name||""}));}}>
-          <option value="">Sem cliente</option>{clients.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}
-        </Sel>
-        <R2><Sel label="Pagamento" value={sf.payment_method} onChange={e=>setSf(f=>({...f,payment_method:e.target.value}))}>{PAYS.map(m=><option key={m} value={m}>{m}</option>)}</Sel><Inp label="Observações" hint="opcional" placeholder="Ex: Dose 2.5mg..." value={sf.notes} onChange={e=>setSf(f=>({...f,notes:e.target.value}))}/></R2>
-        <div style={{display:"flex",gap:".5rem",justifyContent:"flex-end"}}><Btn v="ghost" onClick={()=>setModal(null)}>Cancelar</Btn><Btn v="ok" onClick={registerSale} disabled={!sf.product_id||!sf.unit_price}><Ic n="save" s={13}/>Confirmar</Btn></div>
+      <Modal title="Nova Venda" onClose={()=>{setModal(null);cartReset();}} icon="sales" wide>
+
+        {/* Info banner */}
+        <div style={{background:"var(--infobox)",borderRadius:".45rem",padding:".5rem .8rem",marginBottom:"1rem",fontSize:".72rem",color:"#4f5ef0",display:"flex",gap:".35rem",alignItems:"center"}}><Ic n="info" s={12}/>Múltiplos produtos · Baixa automática no estoque · Lança no caixa</div>
+
+        {/* ── ITENS DO CARRINHO ── */}
+        <div style={{marginBottom:"1rem"}}>
+          <div style={{fontSize:".68rem",color:"var(--sub)",textTransform:"uppercase",letterSpacing:".06em",marginBottom:".5rem",fontWeight:700}}>
+            🛒 Itens da Venda
+          </div>
+
+          {/* Cabeçalho colunas */}
+          <div style={{display:"grid",gridTemplateColumns:"1fr 80px 110px 80px",gap:".4rem",marginBottom:".35rem",padding:"0 .1rem"}}>
+            {["Produto","Qtd","Preço unit.",""].map(h=>(
+              <div key={h} style={{fontSize:".62rem",color:"var(--sub)",textTransform:"uppercase",letterSpacing:".05em"}}>{h}</div>
+            ))}
+          </div>
+
+          {/* Linhas de produto */}
+          {cartItems.map((item,idx)=>(
+            <div key={item.key} style={{display:"grid",gridTemplateColumns:"1fr 80px 110px 36px",gap:".4rem",marginBottom:".4rem",alignItems:"center"}}>
+
+              {/* Seletor de produto */}
+              <select
+                value={item.product_id}
+                onChange={e=>cartSetProd(item.key,e.target.value)}
+                style={{...IS,fontSize:".8rem",padding:".45rem .6rem"}}
+              >
+                <option value="">Selecione...</option>
+                {products.map(p=>(
+                  <option key={p.id} value={p.id} disabled={p.stock_qty<=0}>
+                    {CATS[p.category]||"📋"} {p.name} {p.stock_qty<=0?"(zerado)":`(${p.stock_qty} ${p.unit||"un"})`}
+                  </option>
+                ))}
+              </select>
+
+              {/* Quantidade */}
+              <input
+                type="number" min="1"
+                value={item.quantity}
+                onChange={e=>cartSetQty(item.key,e.target.value)}
+                style={{...IS,fontSize:".82rem",padding:".45rem .5rem",textAlign:"center"}}
+              />
+
+              {/* Preço unitário */}
+              <input
+                type="number" min="0" step="0.01"
+                value={item.unit_price||"" }
+                onChange={e=>cartSetPrice(item.key,e.target.value)}
+                placeholder="0,00"
+                style={{...IS,fontSize:".82rem",padding:".45rem .5rem"}}
+              />
+
+              {/* Remover linha */}
+              <button
+                onClick={()=>cartRemoveLine(item.key)}
+                disabled={cartItems.length===1}
+                style={{background:cartItems.length===1?"transparent":"#1e1010",border:`1px solid ${cartItems.length===1?"var(--bdr)":"#3a1515"}`,borderRadius:".4rem",padding:".4rem",color:cartItems.length===1?"var(--bdr2)":"#f56565",display:"flex",alignItems:"center",justifyContent:"center",height:"100%"}}
+                title="Remover item"
+              ><Ic n="trash" s={13}/></button>
+            </div>
+          ))}
+
+          {/* Subtotal por linha */}
+          {cartItems.some(i=>i.product_id)&&(
+            <div style={{display:"grid",gridTemplateColumns:"1fr 80px 110px 36px",gap:".4rem",marginBottom:".4rem",padding:"0 .1rem"}}>
+              {cartItems.map(i=>(
+                <React.Fragment key={i.key+"_sub"}>
+                  <div style={{fontSize:".7rem",color:"var(--tx4)",alignSelf:"center",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{i.product_name||"—"}</div>
+                  <div style={{fontSize:".7rem",color:"var(--sub)",textAlign:"center"}}>{i.quantity>0?i.quantity:"—"}</div>
+                  <div style={{fontSize:".75rem",fontWeight:700,color:i.unit_price>0?"#10b981":"var(--sub)",fontFamily:"'Syne',sans-serif"}}>{i.unit_price>0?fmt(i.unit_price*i.quantity):"—"}</div>
+                  <div/>
+                </React.Fragment>
+              ))}
+            </div>
+          )}
+
+          {/* Botão adicionar produto */}
+          <button
+            onClick={cartAddLine}
+            style={{display:"flex",alignItems:"center",gap:".35rem",padding:".4rem .85rem",borderRadius:".45rem",border:"1px dashed #4f5ef060",background:"#4f5ef008",color:"#4f5ef0",fontSize:".78rem",fontFamily:"'DM Sans',sans-serif",fontWeight:600,width:"100%",justifyContent:"center",marginTop:".25rem"}}
+          >
+            <Ic n="plus" s={13}/> Adicionar produto
+          </button>
+        </div>
+
+        {/* ── FRETE ── */}
+        <div style={{background:"var(--pill)",borderRadius:".5rem",padding:".75rem",marginBottom:"1rem"}}>
+          <div style={{fontSize:".68rem",color:"var(--sub)",textTransform:"uppercase",letterSpacing:".06em",marginBottom:".5rem",fontWeight:700}}>🚚 Frete / Taxa de Entrega</div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:".5rem",alignItems:"center"}}>
+            <input
+              type="number" min="0" step="0.01"
+              value={cartFreight}
+              onChange={e=>setCartFreight(e.target.value)}
+              placeholder="0,00 — opcional"
+              style={{...IS,fontSize:".83rem"}}
+            />
+            <div style={{fontSize:".75rem",color:"var(--tx4)"}}>
+              {cartFreightVal>0
+                ?<span style={{color:"#f59e0b",fontWeight:600}}>+ {fmt(cartFreightVal)} no total</span>
+                :"Sem frete / retirada no local"}
+            </div>
+          </div>
+        </div>
+
+        {/* ── CLIENTE + PAGAMENTO ── */}
+        <R2>
+          <Field label="Cliente" hint="opcional">
+            <select
+              value={cartClient.id}
+              onChange={e=>{const c=clients.find(x=>x.id===e.target.value);setCartClient({id:e.target.value,name:c?.name||""});}}
+              style={IS}
+            >
+              <option value="">Sem cliente</option>
+              {clients.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+          </Field>
+          <Field label="Forma de Pagamento">
+            <select value={cartPayment} onChange={e=>setCartPayment(e.target.value)} style={IS}>
+              {PAYS.map(m=><option key={m} value={m}>{m}</option>)}
+            </select>
+          </Field>
+        </R2>
+        <Inp label="Observações" hint="opcional" placeholder="Ex: Entregar no período da tarde..." value={cartNotes} onChange={e=>setCartNotes(e.target.value)}/>
+
+        {/* ── RESUMO TOTAL ── */}
+        <div style={{background:"linear-gradient(135deg,#4f5ef015,#10b98115)",border:"1px solid #4f5ef030",borderRadius:".65rem",padding:"1rem",marginBottom:"1rem"}}>
+          <div style={{fontSize:".68rem",color:"var(--sub)",textTransform:"uppercase",letterSpacing:".06em",marginBottom:".6rem",fontWeight:700}}>💰 Resumo da Venda</div>
+          <div style={{display:"flex",flexDirection:"column",gap:".3rem"}}>
+            {cartItems.filter(i=>i.product_id&&i.unit_price>0).map(i=>(
+              <div key={i.key+"_res"} style={{display:"flex",justifyContent:"space-between",fontSize:".78rem"}}>
+                <span style={{color:"var(--tx4)"}}>{i.product_name} × {i.quantity}</span>
+                <span style={{color:"var(--tx3)",fontWeight:600}}>{fmt(i.unit_price*i.quantity)}</span>
+              </div>
+            ))}
+            {cartFreightVal>0&&(
+              <div style={{display:"flex",justifyContent:"space-between",fontSize:".78rem"}}>
+                <span style={{color:"var(--tx4)"}}>🚚 Frete/Entrega</span>
+                <span style={{color:"#f59e0b",fontWeight:600}}>{fmt(cartFreightVal)}</span>
+              </div>
+            )}
+            <div style={{borderTop:"1px solid #4f5ef030",marginTop:".4rem",paddingTop:".4rem",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+              <span style={{fontFamily:"'Syne',sans-serif",fontWeight:700,fontSize:".82rem",color:"var(--tx)"}}>TOTAL</span>
+              <span style={{fontFamily:"'Syne',sans-serif",fontWeight:800,fontSize:"1.2rem",color:"#10b981"}}>{fmt(cartTotal)}</span>
+            </div>
+            {cartItems.filter(i=>i.product_id).length>0&&(
+              <div style={{fontSize:".67rem",color:"var(--sub)",textAlign:"right"}}>
+                {cartItems.filter(i=>i.product_id).length} produto(s) · {cartItems.filter(i=>i.product_id).reduce((a,i)=>a+i.quantity,0)} unidade(s)
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* ── AÇÕES ── */}
+        <div style={{display:"flex",gap:".5rem",justifyContent:"space-between",alignItems:"center"}}>
+          <button onClick={cartReset} style={{background:"none",border:"none",color:"var(--tx5)",fontSize:".75rem",fontFamily:"'DM Sans',sans-serif",cursor:"pointer",display:"flex",alignItems:"center",gap:".3rem"}}>
+            <Ic n="trash" s={12}/> Limpar
+          </button>
+          <div style={{display:"flex",gap:".5rem"}}>
+            <Btn v="ghost" onClick={()=>{setModal(null);cartReset();}}>Cancelar</Btn>
+            <Btn v="ok" onClick={registerSale} disabled={cartTotal===0||cartItems.every(i=>!i.product_id)}>
+              <Ic n="save" s={13}/>Finalizar Venda · {fmt(cartTotal)}
+            </Btn>
+          </div>
+        </div>
       </Modal>
     )}
 
