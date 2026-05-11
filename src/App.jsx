@@ -719,9 +719,9 @@ export default function App(){
 
   // CRUD
   const registerSale=async()=>{
-    // Validações
-    const validItems=cartItems.filter(i=>i.product_id&&i.unit_price>0&&i.quantity>0);
-    if(validItems.length===0){toast$("Adicione pelo menos 1 produto com preço.","#f56565");return;}
+    // Aceita preço 0 (doação/cortesia) — filtra só por produto selecionado + quantidade
+    const validItems=cartItems.filter(i=>i.product_id&&i.quantity>0);
+    if(validItems.length===0){toast$("Selecione pelo menos 1 produto.","#f56565");return;}
 
     // Verificar estoque de todos os itens
     for(const item of validItems){
@@ -772,39 +772,87 @@ export default function App(){
         }
       }
 
-      // 3. Lançar UMA entrada no caixa com o total geral
-      const cashLines=[{
-        id:uid(),
-        description:`Venda${clientName?` · ${clientName}`:""}${freight>0?" (c/ frete)":""} · ${desc}`,
-        value:grandTotal,
-        type:"entrada",
-        category:"Venda",
-        sale_id:batchId,
-        product_name:validItems.map(i=>i.product_name).join(", "),
-        added_by:cu.display_name,
-        date:today(),
-      }];
+      // 3. Montar lançamentos de caixa
+      const cashInserts=[];
 
-      // 4. Se tem frete, lança como informação adicional no caixa
-      if(freight>0){
-        cashLines.push({
+      // Separar itens pagos (preço > 0) e cortesia (preço = 0)
+      const paidItems=validItems.filter(i=>i.unit_price>0);
+      const freeItems=validItems.filter(i=>i.unit_price===0);
+
+      // 3a. Entrada de receita para itens com preço
+      if(grandTotal>0){
+        cashInserts.push({
           id:uid(),
-          description:`Frete/Entrega${clientName?` · ${clientName}`:""}`,
-          value:freight,
+          description:`Venda${clientName?` · ${clientName}`:""}${freight>0?" (c/ frete)":""} · ${desc}`,
+          value:grandTotal,
           type:"entrada",
-          category:"Frete",
+          category:"Venda",
           sale_id:batchId,
-          product_name:null,
+          product_name:validItems.map(i=>i.product_name).join(", "),
           added_by:cu.display_name,
           date:today(),
         });
       }
 
-      // Usar apenas 1 lançamento de caixa (total geral incluindo frete)
-      const{error:e2}=await supabase.from("cash_transactions").insert([cashLines[0]]);
-      if(e2){toast$("Aviso: venda registrada mas erro no caixa: "+e2.message,"#f59e0b");}
+      // 3b. Saída de custo para itens CORTESIA (preço = 0)
+      // Representa o custo do produto doado/dado sem custo ao cliente
+      for(const item of freeItems){
+        const prod=products.find(p=>p.id===item.product_id);
+        const custoProd=(prod?.cost_per_unit||0)*item.quantity;
+        if(custoProd>0){
+          cashInserts.push({
+            id:uid(),
+            description:`Cortesia · ${item.product_name}${clientName?` · ${clientName}`:""}`,
+            value:custoProd,
+            type:"saida",
+            category:"Cortesia/Brinde",
+            sale_id:batchId,
+            product_name:item.product_name,
+            added_by:cu.display_name,
+            date:today(),
+          });
+        } else {
+          // Custo zero — registra R$0 apenas para rastreio
+          cashInserts.push({
+            id:uid(),
+            description:`Cortesia · ${item.product_name}${clientName?` · ${clientName}`:""}`,
+            value:0,
+            type:"saida",
+            category:"Cortesia/Brinde",
+            sale_id:batchId,
+            product_name:item.product_name,
+            added_by:cu.display_name,
+            date:today(),
+          });
+        }
+      }
 
-      toast$(`✅ Venda registrada! ${validItems.length} produto(s) · Total: ${fmt(grandTotal)}`);
+      // 3c. Se não tem nenhum item pago e não tem custo de cortesia,
+      //     registra ao menos 1 lançamento simbólico de R$0
+      if(cashInserts.length===0){
+        cashInserts.push({
+          id:uid(),
+          description:`Venda cortesia · ${desc}${clientName?` · ${clientName}`:""}`,
+          value:0,
+          type:"entrada",
+          category:"Cortesia",
+          sale_id:batchId,
+          product_name:validItems.map(i=>i.product_name).join(", "),
+          added_by:cu.display_name,
+          date:today(),
+        });
+      }
+
+      // 4. Inserir todos os lançamentos de caixa
+      const{error:e2}=await supabase.from("cash_transactions").insert(cashInserts);
+      if(e2){toast$("Aviso: venda salva mas erro no caixa: "+e2.message,"#f59e0b");}
+
+      const freeCount=freeItems.length;
+      const paidCount=paidItems.length;
+      const msg=freeCount>0
+        ?`✅ Venda registrada! ${paidCount} pago(s) · ${freeCount} cortesia · Total: ${fmt(grandTotal)}`
+        :`✅ Venda registrada! ${validItems.length} produto(s) · Total: ${fmt(grandTotal)}`;
+      toast$(msg);
       setModal(null);
       cartReset();
     }catch(ex){toast$("Erro de conexão: "+ex.message,"#f56565");}
@@ -816,27 +864,47 @@ export default function App(){
   };
   const deleteSale=async(id)=>{
     try{
-      // 1. Buscar dados da venda antes de excluir
+      // 1. Buscar a venda clicada
       const sale=sales.find(s=>s.id===id);
       if(!sale){toast$("Venda não encontrada.","#f56565");return;}
 
-      // 2. Excluir a venda
-      const{error:e1}=await supabase.from("sales").delete().eq("id",id);
-      if(e1){toast$("Erro ao excluir venda: "+e1.message,"#f56565");return;}
+      // 2. Encontrar TODOS os itens do mesmo batch (ou só este se não tem batch)
+      const batchKey=sale.batch_id||id;
+      const batchSales=sale.batch_id
+        ? sales.filter(s=>s.batch_id===batchKey)
+        : [sale];
 
-      // 3. Reverter estoque (devolver quantidade ao produto)
-      const prod=products.find(p=>p.id===sale.product_id||p.name===sale.product_name);
-      if(prod){
-        await supabase.from("products").update({
-          stock_qty:(prod.stock_qty||0)+sale.quantity
-        }).eq("id",prod.id);
+      // 3. Reverter estoque de CADA item do batch
+      for(const s of batchSales){
+        const prod=products.find(p=>p.id===s.product_id||p.name===s.product_name);
+        if(prod&&s.quantity>0){
+          await supabase.from("products")
+            .update({stock_qty:(prod.stock_qty||0)+s.quantity})
+            .eq("id",prod.id);
+        }
       }
 
-      // 4. Excluir lançamento de caixa vinculado à venda
-      await supabase.from("cash_transactions").delete().eq("sale_id",id);
+      // 4. Excluir TODOS os registros de venda do batch
+      if(sale.batch_id){
+        await supabase.from("sales").delete().eq("batch_id",batchKey);
+      } else {
+        await supabase.from("sales").delete().eq("id",id);
+      }
 
-      toast$("Venda excluída · estoque e caixa revertidos!","#f59e0b");
-    }catch(ex){toast$("Erro: "+ex.message,"#f56565");}
+      // 5. Excluir TODOS os lançamentos de caixa vinculados ao batch
+      // (Entrada de receita + Saída de custo de cortesia + Frete)
+      await supabase.from("cash_transactions").delete().eq("sale_id",batchKey);
+
+      // 6. Feedback detalhado
+      const nItens=batchSales.length;
+      const totalRevertido=batchSales.reduce((a,s)=>a+s.total_price,0);
+      toast$(
+        nItens>1
+          ? `🔄 Venda excluída · ${nItens} itens revertidos · Estoque e caixa restaurados`
+          : `🔄 Venda excluída · Estoque e caixa revertidos`,
+        "#f59e0b"
+      );
+    }catch(ex){toast$("Erro ao excluir: "+ex.message,"#f56565");}
   };
 
   const registerStock=async()=>{
@@ -1084,6 +1152,8 @@ export default function App(){
                   <div style={{display:"flex",alignItems:"center",gap:".35rem",flexWrap:"wrap",marginBottom:".18rem"}}>
                     <span style={{fontWeight:700,fontSize:".83rem",color:"var(--tx)"}}>{s.product_name}</span>
                     <Badge color="#8b44f0" sm>{s.quantity} un</Badge>
+                    {s.unit_price===0&&<Badge color="#f59e0b" sm>Cortesia</Badge>}
+                    {s.batch_id&&<Badge color="#44475a" sm>Lote</Badge>}
                     <Badge color="#0891b2" sm>{s.payment_method}</Badge>
                   </div>
                   <div style={{fontSize:".67rem",color:"var(--tx5)"}}>{s.date}{s.client_name&&` · 👤 ${s.client_name}`}{s.notes&&` · ${s.notes}`}</div>
@@ -1325,7 +1395,7 @@ export default function App(){
       <Modal title="Nova Venda" onClose={()=>{setModal(null);cartReset();}} icon="sales" wide>
 
         {/* Info banner */}
-        <div style={{background:"var(--infobox)",borderRadius:".45rem",padding:".5rem .8rem",marginBottom:"1rem",fontSize:".72rem",color:"#4f5ef0",display:"flex",gap:".35rem",alignItems:"center"}}><Ic n="info" s={12}/>Múltiplos produtos · Baixa automática no estoque · Lança no caixa</div>
+        <div style={{background:"var(--infobox)",borderRadius:".45rem",padding:".5rem .8rem",marginBottom:"1rem",fontSize:".72rem",color:"#4f5ef0",display:"flex",gap:".35rem",alignItems:"center"}}><Ic n="info" s={12}/>Múltiplos produtos · Preço 0 = cortesia (registra custo) · Baixa estoque automática</div>
 
         {/* ── ITENS DO CARRINHO ── */}
         <div style={{marginBottom:"1rem"}}>
@@ -1451,10 +1521,12 @@ export default function App(){
         <div style={{background:"linear-gradient(135deg,#4f5ef015,#10b98115)",border:"1px solid #4f5ef030",borderRadius:".65rem",padding:"1rem",marginBottom:"1rem"}}>
           <div style={{fontSize:".68rem",color:"var(--sub)",textTransform:"uppercase",letterSpacing:".06em",marginBottom:".6rem",fontWeight:700}}>💰 Resumo da Venda</div>
           <div style={{display:"flex",flexDirection:"column",gap:".3rem"}}>
-            {cartItems.filter(i=>i.product_id&&i.unit_price>0).map(i=>(
+            {cartItems.filter(i=>i.product_id).map(i=>(
               <div key={i.key+"_res"} style={{display:"flex",justifyContent:"space-between",fontSize:".78rem"}}>
-                <span style={{color:"var(--tx4)"}}>{i.product_name} × {i.quantity}</span>
-                <span style={{color:"var(--tx3)",fontWeight:600}}>{fmt(i.unit_price*i.quantity)}</span>
+                <span style={{color:"var(--tx4)"}}>{i.product_name} × {i.quantity}{i.unit_price===0?" 🎁":""}</span>
+                <span style={{color:i.unit_price===0?"#f59e0b":"var(--tx3)",fontWeight:600}}>
+                  {i.unit_price===0?"Cortesia":fmt(i.unit_price*i.quantity)}
+                </span>
               </div>
             ))}
             {cartFreightVal>0&&(
@@ -1482,7 +1554,7 @@ export default function App(){
           </button>
           <div style={{display:"flex",gap:".5rem"}}>
             <Btn v="ghost" onClick={()=>{setModal(null);cartReset();}}>Cancelar</Btn>
-            <Btn v="ok" onClick={registerSale} disabled={cartTotal===0||cartItems.every(i=>!i.product_id)}>
+            <Btn v="ok" onClick={registerSale} disabled={cartItems.every(i=>!i.product_id)}>
               <Ic n="save" s={13}/>Finalizar Venda · {fmt(cartTotal)}
             </Btn>
           </div>
