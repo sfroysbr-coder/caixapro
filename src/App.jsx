@@ -416,12 +416,32 @@ function Analytics({onClose,sales,cashTx,products,clients,dark}){
 
 // ─── TELA DE NOTÍCIAS ────────────────────────────────────────────────────────
 const NEWS_CATS = [
-  {key:"tirzepatida",  label:"💉 Tirzepatida",   emoji:"💉"},
-  {key:"mounjaro",     label:"💊 Mounjaro",       emoji:"💊"},
-  {key:"emagrecimento",label:"⚖️ Emagrecimento",  emoji:"⚖️"},
-  {key:"glp1",         label:"🩺 Ozempic/GLP-1",  emoji:"🩺"},
-  {key:"saude",        label:"🥗 Saúde & Dieta",  emoji:"🥗"},
+  {key:"tirzepatida",   label:"💉 Tirzepatida",   emoji:"💉", q:"tirzepatida"},
+  {key:"mounjaro",      label:"💊 Mounjaro",       emoji:"💊", q:"mounjaro+tirzepatida"},
+  {key:"emagrecimento", label:"⚖️ Emagrecimento",  emoji:"⚖️", q:"emagrecimento+medicamento"},
+  {key:"glp1",          label:"🩺 Ozempic/GLP-1",  emoji:"🩺", q:"ozempic+semaglutida"},
+  {key:"saude",         label:"🥗 Saúde & Dieta",  emoji:"🥗", q:"saude+alimentacao+dieta"},
 ];
+
+// Parse XML RSS manualmente no navegador
+function parseRSSXML(xml){
+  const items=[];
+  const blocks=xml.match(/<item[\s\S]*?<\/item>/g)||[];
+  for(const b of blocks.slice(0,18)){
+    const g=(tag)=>{
+      const r=new RegExp(`<${tag}[^>]*>(?:<!\\[CDATA\\[)?([\\s\\S]*?)(?:\\]\\]>)?<\/${tag}>`,"i");
+      const m=b.match(r);
+      return m?(m[1]||"").replace(/<[^>]*>/g,"").trim():"";
+    };
+    const title=g("title").replace(/\s+-\s+[\w\s,]+$/,"").trim();
+    const link=g("link")||g("guid");
+    const date=g("pubDate");
+    const source=g("source")||"Google News";
+    const desc=g("description").slice(0,220);
+    if(title&&link)items.push({title,link,date,source,description:desc});
+  }
+  return items;
+}
 
 function NewsScreen(){
   const[articles,setArticles]=useState([]);
@@ -429,24 +449,86 @@ function NewsScreen(){
   const[error,setError]=useState(null);
   const[cat,setCat]=useState("tirzepatida");
   const[lastUpdate,setLastUpdate]=useState(null);
+  const[source,setSource]=useState("");
 
   const fetchNews=useCallback(async(category)=>{
-    setLoading(true);setError(null);setArticles([]);
+    setLoading(true);setError(null);setArticles([]);setSource("");
+    const catObj=NEWS_CATS.find(c=>c.key===category)||NEWS_CATS[0];
+    const q=catObj.q;
+    const rssUrl=`https://news.google.com/rss/search?q=${encodeURIComponent(q)}&hl=pt-BR&gl=BR&ceid=BR:pt`;
+
+    // ── Tentativa 1: Netlify Function (server-side, sem CORS) ──
     try{
-      const r=await fetch(`/.netlify/functions/news?category=${category}`);
-      if(!r.ok)throw new Error("Servidor indisponível ("+r.status+")");
-      const data=await r.json();
-      if(data.ok&&data.items?.length>0){
-        setArticles(data.items);
-        setLastUpdate(new Date().toLocaleTimeString("pt-BR"));
-      }else if(data.items?.length===0){
-        setError("Nenhuma notícia encontrada nesta categoria agora. Tente outra ou aguarde alguns minutos.");
-      }else{
-        setError(data.error||"Erro ao buscar notícias.");
+      const r=await fetch(`/.netlify/functions/news?category=${category}`,{signal:AbortSignal.timeout(5000)});
+      if(r.ok){
+        const data=await r.json();
+        if(data.ok&&data.items?.length>0){
+          setArticles(data.items);
+          setLastUpdate(new Date().toLocaleTimeString("pt-BR"));
+          setSource("Netlify Function");
+          setLoading(false);return;
+        }
       }
-    }catch(e){
-      setError("Erro: "+e.message+". Verifique se o deploy do Netlify está atualizado.");
-    }
+    }catch(_){}
+
+    // ── Tentativa 2: corsproxy.io (CORS proxy confiável) ──
+    try{
+      const proxy="https://corsproxy.io/?";
+      const r=await fetch(proxy+encodeURIComponent(rssUrl),{signal:AbortSignal.timeout(8000)});
+      if(r.ok){
+        const text=await r.text();
+        if(text.includes("<item>")){
+          const items=parseRSSXML(text);
+          if(items.length>0){
+            setArticles(items);
+            setLastUpdate(new Date().toLocaleTimeString("pt-BR"));
+            setSource("corsproxy.io");
+            setLoading(false);return;
+          }
+        }
+      }
+    }catch(_){}
+
+    // ── Tentativa 3: allorigins.win ──
+    try{
+      const r=await fetch(`https://api.allorigins.win/get?url=${encodeURIComponent(rssUrl)}`,{signal:AbortSignal.timeout(8000)});
+      if(r.ok){
+        const data=await r.json();
+        if(data.contents&&data.contents.includes("<item>")){
+          const items=parseRSSXML(data.contents);
+          if(items.length>0){
+            setArticles(items);
+            setLastUpdate(new Date().toLocaleTimeString("pt-BR"));
+            setSource("allorigins");
+            setLoading(false);return;
+          }
+        }
+      }
+    }catch(_){}
+
+    // ── Tentativa 4: rss2json.com ──
+    try{
+      const r=await fetch(`https://api.rss2json.com/v1/api.json?rss_url=${encodeURIComponent(rssUrl)}&count=18`,{signal:AbortSignal.timeout(8000)});
+      if(r.ok){
+        const data=await r.json();
+        if(data.status==="ok"&&data.items?.length>0){
+          const items=data.items.map(i=>({
+            title:(i.title||"").replace(/<[^>]*>/g,"").replace(/\s+-\s+[\w\s,]+$/,"").trim(),
+            link:i.link||"#",
+            date:i.pubDate,
+            source:i.author||"Google News",
+            description:(i.description||"").replace(/<[^>]*>/g,"").slice(0,220),
+          }));
+          setArticles(items);
+          setLastUpdate(new Date().toLocaleTimeString("pt-BR"));
+          setSource("rss2json");
+          setLoading(false);return;
+        }
+      }
+    }catch(_){}
+
+    // Todas falharam
+    setError("Não foi possível carregar as notícias. Verifique sua conexão com a internet e tente novamente.");
     setLoading(false);
   },[]);
 
@@ -457,6 +539,7 @@ function NewsScreen(){
     try{
       const dt=new Date(d);
       const diff=Math.floor((new Date()-dt)/60000);
+      if(isNaN(diff))return d;
       if(diff<1)return"agora";
       if(diff<60)return diff+"min atrás";
       if(diff<1440)return Math.floor(diff/60)+"h atrás";
@@ -471,26 +554,22 @@ function NewsScreen(){
       {/* Cabeçalho */}
       <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:"1rem",flexWrap:"wrap",gap:".5rem"}}>
         <div>
-          <h2 style={{fontFamily:"'Syne',sans-serif",fontWeight:800,fontSize:"1.05rem",color:"var(--tx)"}}>
-            📰 Notícias
-          </h2>
+          <h2 style={{fontFamily:"'Syne',sans-serif",fontWeight:800,fontSize:"1.05rem",color:"var(--tx)"}}>📰 Notícias</h2>
           <div style={{fontSize:".67rem",color:"var(--tx5)",marginTop:".1rem"}}>
             Feed ao vivo · Tirzepatida, Emagrecimento & Saúde
+            {source&&<span style={{marginLeft:".5rem",color:"#10b981"}}>· via {source}</span>}
           </div>
         </div>
         <div style={{display:"flex",alignItems:"center",gap:".5rem"}}>
           {lastUpdate&&<span style={{fontSize:".63rem",color:"var(--sub)"}}>🕐 {lastUpdate}</span>}
-          <button
-            onClick={()=>fetchNews(cat)}
-            disabled={loading}
-            style={{display:"inline-flex",alignItems:"center",gap:".3rem",padding:".35rem .75rem",borderRadius:".4rem",background:"#4f5ef020",color:"#4f5ef0",border:"1px solid #4f5ef040",fontSize:".73rem",fontFamily:"'DM Sans',sans-serif",fontWeight:600}}
-          >
+          <button onClick={()=>fetchNews(cat)} disabled={loading}
+            style={{display:"inline-flex",alignItems:"center",gap:".3rem",padding:".35rem .75rem",borderRadius:".4rem",background:"#4f5ef020",color:"#4f5ef0",border:"1px solid #4f5ef040",fontSize:".73rem",fontFamily:"'DM Sans',sans-serif",fontWeight:600}}>
             <Ic n="sync" s={12}/>{loading?"Buscando...":"Atualizar"}
           </button>
         </div>
       </div>
 
-      {/* Abas de categoria */}
+      {/* Abas */}
       <div style={{display:"flex",gap:".35rem",marginBottom:"1rem",overflowX:"auto",paddingBottom:".25rem"}}>
         {NEWS_CATS.map(c=>(
           <button key={c.key} onClick={()=>setCat(c.key)}
@@ -500,20 +579,20 @@ function NewsScreen(){
         ))}
       </div>
 
-      {/* Skeleton loading */}
+      {/* Skeleton */}
       {loading&&(
         <div style={{display:"grid",gap:".7rem"}}>
-          {[1,2,3,4,5,6].map(i=>(
-            <div key={i} style={{background:"var(--card)",border:"1px solid var(--bdr)",borderRadius:".75rem",padding:".9rem 1rem",display:"flex",gap:".85rem",alignItems:"flex-start"}}>
-              <div style={{width:76,height:76,borderRadius:".5rem",background:"var(--bdr)",flexShrink:0,animation:"newsSkl 1.4s ease infinite"}}/>
+          {[1,2,3,4,5].map(i=>(
+            <div key={i} style={{background:"var(--card)",border:"1px solid var(--bdr)",borderRadius:".75rem",padding:".9rem 1rem",display:"flex",gap:".85rem"}}>
+              <div style={{width:52,height:52,borderRadius:".5rem",background:"var(--bdr)",flexShrink:0,animation:"newsSkl 1.4s ease infinite"}}/>
               <div style={{flex:1,display:"flex",flexDirection:"column",gap:".4rem"}}>
                 <div style={{height:13,background:"var(--bdr)",borderRadius:3,animation:"newsSkl 1.4s ease infinite"}}/>
-                <div style={{height:13,background:"var(--bdr)",borderRadius:3,width:"80%",animation:"newsSkl 1.4s ease infinite"}}/>
-                <div style={{height:11,background:"var(--bdr)",borderRadius:3,width:"50%",marginTop:".2rem",animation:"newsSkl 1.4s ease infinite"}}/>
+                <div style={{height:13,background:"var(--bdr)",borderRadius:3,width:"75%",animation:"newsSkl 1.4s ease infinite"}}/>
+                <div style={{height:10,background:"var(--bdr)",borderRadius:3,width:"40%",animation:"newsSkl 1.4s ease infinite"}}/>
               </div>
             </div>
           ))}
-          <style>{`@keyframes newsSkl{0%,100%{opacity:.4}50%{opacity:.9}}`}</style>
+          <style>{`@keyframes newsSkl{0%,100%{opacity:.35}50%{opacity:.8}}`}</style>
         </div>
       )}
 
@@ -521,11 +600,8 @@ function NewsScreen(){
       {!loading&&error&&(
         <div style={{background:"var(--card)",border:"1px solid #f59e0b40",borderRadius:".75rem",padding:"2rem 1.5rem",textAlign:"center"}}>
           <div style={{fontSize:"2.5rem",marginBottom:".75rem"}}>📡</div>
-          <div style={{color:"#f59e0b",fontWeight:700,fontSize:".9rem",marginBottom:".5rem"}}>Feed indisponível</div>
-          <div style={{color:"var(--tx5)",fontSize:".78rem",maxWidth:360,margin:"0 auto .35rem"}}>{error}</div>
-          <div style={{color:"var(--tx6)",fontSize:".7rem",marginBottom:"1.25rem"}}>
-            Certifique-se de que o deploy do Netlify incluiu o arquivo <code style={{background:"var(--pill)",padding:".1rem .35rem",borderRadius:".25rem",fontSize:".68rem"}}>netlify/functions/news.js</code>
-          </div>
+          <div style={{color:"#f59e0b",fontWeight:700,fontSize:".9rem",marginBottom:".5rem"}}>Sem conexão com os feeds</div>
+          <div style={{color:"var(--tx5)",fontSize:".78rem",maxWidth:380,margin:"0 auto .75rem",lineHeight:1.5}}>{error}</div>
           <button onClick={()=>fetchNews(cat)}
             style={{padding:".5rem 1.25rem",borderRadius:".45rem",background:"linear-gradient(135deg,#4f5ef0,#8b44f0)",color:"#fff",border:"none",fontFamily:"'DM Sans',sans-serif",fontWeight:600,fontSize:".83rem"}}>
             Tentar novamente
@@ -533,18 +609,15 @@ function NewsScreen(){
         </div>
       )}
 
-      {/* Lista de notícias */}
+      {/* Notícias */}
       {!loading&&!error&&articles.length>0&&(
         <div style={{display:"grid",gap:".65rem"}}>
           {articles.map((a,i)=>(
             <a key={i} href={a.link} target="_blank" rel="noopener noreferrer"
-              style={{textDecoration:"none",display:"block",borderRadius:".75rem",transition:"transform .15s"}}
-              onMouseEnter={e=>e.currentTarget.style.transform="translateY(-2px)"}
-              onMouseLeave={e=>e.currentTarget.style.transform="translateY(0)"}>
-              <div style={{background:"var(--card)",border:"1px solid var(--bdr)",borderRadius:".75rem",padding:".9rem 1rem",display:"flex",gap:".85rem",alignItems:"flex-start",transition:"border-color .2s"}}
-                onMouseEnter={e=>e.currentTarget.style.borderColor="#4f5ef0"}
-                onMouseLeave={e=>e.currentTarget.style.borderColor="var(--bdr)"}>
-                {/* Ícone categoria */}
+              style={{textDecoration:"none",display:"block",borderRadius:".75rem"}}
+              onMouseEnter={e=>e.currentTarget.firstChild.style.borderColor="#4f5ef0"}
+              onMouseLeave={e=>e.currentTarget.firstChild.style.borderColor="var(--bdr)"}>
+              <div style={{background:"var(--card)",border:"1px solid var(--bdr)",borderRadius:".75rem",padding:".9rem 1rem",display:"flex",gap:".85rem",alignItems:"flex-start",transition:"border-color .2s,transform .15s"}}>
                 <div style={{width:52,height:52,borderRadius:".6rem",background:"linear-gradient(135deg,#4f5ef015,#8b44f015)",border:"1px solid #4f5ef020",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"1.6rem",flexShrink:0}}>
                   {catObj.emoji}
                 </div>
@@ -558,26 +631,17 @@ function NewsScreen(){
                     </div>
                   )}
                   <div style={{display:"flex",alignItems:"center",gap:".5rem",flexWrap:"wrap"}}>
-                    {a.source&&(
-                      <span style={{fontSize:".63rem",fontWeight:600,color:"#4f5ef0",background:"#4f5ef015",borderRadius:"99px",padding:".1rem .45rem",border:"1px solid #4f5ef030",maxWidth:140,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
-                        {a.source}
-                      </span>
-                    )}
-                    {a.date&&(
-                      <span style={{fontSize:".63rem",color:"var(--sub)"}}>{fmtDate(a.date)}</span>
-                    )}
-                    <span style={{fontSize:".63rem",color:"#4f5ef0",marginLeft:"auto",fontWeight:600}}>
-                      Ler matéria →
-                    </span>
+                    {a.source&&<span style={{fontSize:".63rem",fontWeight:600,color:"#4f5ef0",background:"#4f5ef015",borderRadius:"99px",padding:".1rem .45rem",border:"1px solid #4f5ef030",maxWidth:160,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{a.source}</span>}
+                    {a.date&&<span style={{fontSize:".63rem",color:"var(--sub)"}}>{fmtDate(a.date)}</span>}
+                    <span style={{fontSize:".63rem",color:"#4f5ef0",marginLeft:"auto",fontWeight:600}}>Ler matéria →</span>
                   </div>
                 </div>
               </div>
             </a>
           ))}
-
-          {/* Rodapé */}
           <div style={{textAlign:"center",padding:".75rem",fontSize:".68rem",color:"var(--tx6)"}}>
-            {articles.length} notícias · Fonte: Google News · <button onClick={()=>fetchNews(cat)} style={{background:"none",border:"none",color:"#4f5ef0",cursor:"pointer",fontSize:".68rem",fontFamily:"'DM Sans',sans-serif",fontWeight:600}}>Atualizar</button>
+            {articles.length} notícias · Google News ·{" "}
+            <button onClick={()=>fetchNews(cat)} style={{background:"none",border:"none",color:"#4f5ef0",cursor:"pointer",fontSize:".68rem",fontFamily:"'DM Sans',sans-serif",fontWeight:600}}>Atualizar</button>
           </div>
         </div>
       )}
