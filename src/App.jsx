@@ -697,6 +697,8 @@ export default function App(){
   const[cartPayment,setCartPayment]=useState("PIX");
   const[cartNotes,setCartNotes]=useState("");
   const[cartFreight,setCartFreight]=useState("");
+  const[cartDelivery,setCartDelivery]=useState(false);   // flag entregador solicitado
+  const[cartDeliveryCost,setCartDeliveryCost]=useState(""); // custo pago ao entregador
   // legado (para editSale)
   const FS={product_id:"",product_name:"",client_id:"",client_name:"",quantity:"1",unit_price:"",total_price:"",notes:"",payment_method:"PIX"};
   const FC={name:"",email:"",phone:"",notes:""};
@@ -775,11 +777,12 @@ export default function App(){
   };
   const cartAddLine=()=>setCartItems(items=>[...items,newCartItem()]);
   const cartRemoveLine=key=>setCartItems(items=>items.length>1?items.filter(i=>i.key!==key):items);
-  const cartReset=()=>{setCartItems([newCartItem()]);setCartClient({id:"",name:""});setCartPayment("PIX");setCartNotes("");setCartFreight("");};
+  const cartReset=()=>{setCartItems([newCartItem()]);setCartClient({id:"",name:""});setCartPayment("PIX");setCartNotes("");setCartFreight("");setCartDelivery(false);setCartDeliveryCost("");};
 
   const cartSubtotal=cartItems.reduce((a,i)=>a+i.unit_price*i.quantity,0);
   const cartFreightVal=parseFloat(cartFreight)||0;
-  const cartTotal=cartSubtotal+cartFreightVal;
+  const cartDeliveryCostVal=cartDelivery?(parseFloat(cartDeliveryCost)||0):0;
+  const cartTotal=cartSubtotal+cartFreightVal; // total cobrado do cliente
 
   // CRUD
   const registerSale=async()=>{
@@ -907,15 +910,31 @@ export default function App(){
         });
       }
 
-      // 4. Inserir todos os lançamentos de caixa
+      // 4. Se entregador solicitado e tem custo, lança saída do custo
+      if(cartDelivery&&cartDeliveryCostVal>0){
+        cashInserts.push({
+          id:uid(),
+          description:`Custo Entregador${clientName?` · ${clientName}`:""}`,
+          value:cartDeliveryCostVal,
+          type:"saida",
+          category:"Custo Entregador",
+          sale_id:batchId,
+          product_name:null,
+          added_by:cu.display_name,
+          date:today(),
+        });
+      }
+
+      // 5. Inserir todos os lançamentos de caixa
       const{error:e2}=await supabase.from("cash_transactions").insert(cashInserts);
       if(e2){toast$("Aviso: venda salva mas erro no caixa: "+e2.message,"#f59e0b");}
 
       const freeCount=freeItems.length;
       const paidCount=paidItems.length;
+      const deliveryInfo=cartDelivery&&cartDeliveryCostVal>0?` · 🛵 Entregador: ${fmt(cartDeliveryCostVal)}`:"";
       const msg=freeCount>0
-        ?`✅ Venda registrada! ${paidCount} pago(s) · ${freeCount} cortesia · Total: ${fmt(grandTotal)}`
-        :`✅ Venda registrada! ${validItems.length} produto(s) · Total: ${fmt(grandTotal)}`;
+        ?`✅ Venda registrada! ${paidCount} pago(s) · ${freeCount} cortesia · Total: ${fmt(grandTotal)}${deliveryInfo}`
+        :`✅ Venda registrada! ${validItems.length} produto(s) · Total: ${fmt(grandTotal)}${deliveryInfo}`;
       toast$(msg);
       setModal(null);
       cartReset();
@@ -1542,23 +1561,83 @@ export default function App(){
           </button>
         </div>
 
-        {/* ── FRETE ── */}
-        <div style={{background:"var(--pill)",borderRadius:".5rem",padding:".75rem",marginBottom:"1rem"}}>
-          <div style={{fontSize:".68rem",color:"var(--sub)",textTransform:"uppercase",letterSpacing:".06em",marginBottom:".5rem",fontWeight:700}}>🚚 Frete / Taxa de Entrega</div>
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:".5rem",alignItems:"center"}}>
-            <input
-              type="number" min="0" step="0.01"
-              value={cartFreight}
-              onChange={e=>setCartFreight(e.target.value)}
-              placeholder="0,00 — opcional"
-              style={{...IS,fontSize:".83rem"}}
-            />
-            <div style={{fontSize:".75rem",color:"var(--tx4)"}}>
-              {cartFreightVal>0
-                ?<span style={{color:"#f59e0b",fontWeight:600}}>+ {fmt(cartFreightVal)} no total</span>
-                :"Sem frete / retirada no local"}
+        {/* ── ENTREGA ── */}
+        <div style={{background:"var(--pill)",border:`1px solid ${cartDelivery?"#f59e0b40":"var(--bdr)"}`,borderRadius:".6rem",padding:".85rem",marginBottom:"1rem",transition:"border-color .25s"}}>
+
+          {/* Toggle flag entregador */}
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:cartDelivery?".85rem":0}}>
+            <div style={{display:"flex",alignItems:"center",gap:".55rem"}}>
+              <span style={{fontSize:"1.2rem"}}>🛵</span>
+              <div>
+                <div style={{fontSize:".8rem",fontWeight:700,color:"var(--tx)",fontFamily:"'DM Sans',sans-serif"}}>Entregador Solicitado</div>
+                <div style={{fontSize:".65rem",color:"var(--tx5)"}}>Ativa cobrança de frete + registro de custo do entregador</div>
+              </div>
             </div>
+            {/* Switch toggle */}
+            <button
+              onClick={()=>setCartDelivery(v=>{if(v){setCartFreight("");setCartDeliveryCost("");}return !v;})}
+              style={{
+                width:44,height:24,borderRadius:12,padding:2,border:"none",cursor:"pointer",
+                background:cartDelivery?"linear-gradient(135deg,#f59e0b,#d97706)":"var(--bdr2)",
+                transition:"background .25s",position:"relative",flexShrink:0
+              }}
+            >
+              <div style={{
+                width:20,height:20,borderRadius:"50%",background:"#fff",
+                position:"absolute",top:2,
+                left:cartDelivery?22:2,
+                transition:"left .25s",
+                boxShadow:"0 1px 4px rgba(0,0,0,.3)"
+              }}/>
+            </button>
           </div>
+
+          {/* Campos visíveis só quando flag ativa */}
+          {cartDelivery&&(
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:".65rem"}}>
+              {/* Taxa cobrada do cliente */}
+              <div>
+                <div style={{fontSize:".65rem",color:"#10b981",textTransform:"uppercase",letterSpacing:".05em",marginBottom:".3rem",fontWeight:700,display:"flex",alignItems:"center",gap:".3rem"}}>
+                  📈 Taxa cobrada do cliente
+                </div>
+                <input
+                  type="number" min="0" step="0.01"
+                  value={cartFreight}
+                  onChange={e=>setCartFreight(e.target.value)}
+                  placeholder="R$ 0,00"
+                  style={{...IS,fontSize:".83rem",borderColor:cartFreightVal>0?"#10b98150":"var(--bdr2)"}}
+                />
+                {cartFreightVal>0&&<div style={{fontSize:".65rem",color:"#10b981",marginTop:".2rem"}}>+ {fmt(cartFreightVal)} na receita</div>}
+              </div>
+
+              {/* Custo do entregador */}
+              <div>
+                <div style={{fontSize:".65rem",color:"#f56565",textTransform:"uppercase",letterSpacing:".05em",marginBottom:".3rem",fontWeight:700,display:"flex",alignItems:"center",gap:".3rem"}}>
+                  📉 Custo pago ao entregador
+                </div>
+                <input
+                  type="number" min="0" step="0.01"
+                  value={cartDeliveryCost}
+                  onChange={e=>setCartDeliveryCost(e.target.value)}
+                  placeholder="R$ 0,00"
+                  style={{...IS,fontSize:".83rem",borderColor:cartDeliveryCostVal>0?"#f5656550":"var(--bdr2)"}}
+                />
+                {cartDeliveryCostVal>0&&<div style={{fontSize:".65rem",color:"#f56565",marginTop:".2rem"}}>- {fmt(cartDeliveryCostVal)} no caixa</div>}
+              </div>
+
+              {/* Lucro líquido da entrega */}
+              {(cartFreightVal>0||cartDeliveryCostVal>0)&&(
+                <div style={{gridColumn:"1/-1",background:cartFreightVal-cartDeliveryCostVal>=0?"#10b98110":"#f5656510",borderRadius:".4rem",padding:".5rem .75rem",display:"flex",justifyContent:"space-between",alignItems:"center",border:`1px solid ${cartFreightVal-cartDeliveryCostVal>=0?"#10b98130":"#f5656530"}`}}>
+                  <span style={{fontSize:".73rem",color:"var(--tx4)",fontWeight:600}}>
+                    {cartFreightVal-cartDeliveryCostVal>=0?"💰 Lucro líquido da entrega":"⚠️ Prejuízo na entrega"}
+                  </span>
+                  <span style={{fontFamily:"'Syne',sans-serif",fontWeight:700,fontSize:".88rem",color:cartFreightVal-cartDeliveryCostVal>=0?"#10b981":"#f56565"}}>
+                    {fmt(Math.abs(cartFreightVal-cartDeliveryCostVal))}
+                  </span>
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
         {/* ── CLIENTE + PAGAMENTO ── */}
@@ -1593,10 +1672,16 @@ export default function App(){
                 </span>
               </div>
             ))}
-            {cartFreightVal>0&&(
+            {cartDelivery&&cartFreightVal>0&&(
               <div style={{display:"flex",justifyContent:"space-between",fontSize:".78rem"}}>
-                <span style={{color:"var(--tx4)"}}>🚚 Frete/Entrega</span>
-                <span style={{color:"#f59e0b",fontWeight:600}}>{fmt(cartFreightVal)}</span>
+                <span style={{color:"var(--tx4)"}}>🛵 Frete cobrado do cliente</span>
+                <span style={{color:"#10b981",fontWeight:600}}>+ {fmt(cartFreightVal)}</span>
+              </div>
+            )}
+            {cartDelivery&&cartDeliveryCostVal>0&&(
+              <div style={{display:"flex",justifyContent:"space-between",fontSize:".78rem"}}>
+                <span style={{color:"var(--tx4)"}}>📉 Custo entregador (sai do caixa)</span>
+                <span style={{color:"#f56565",fontWeight:600}}>- {fmt(cartDeliveryCostVal)}</span>
               </div>
             )}
             <div style={{borderTop:"1px solid #4f5ef030",marginTop:".4rem",paddingTop:".4rem",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
@@ -1606,6 +1691,7 @@ export default function App(){
             {cartItems.filter(i=>i.product_id).length>0&&(
               <div style={{fontSize:".67rem",color:"var(--sub)",textAlign:"right"}}>
                 {cartItems.filter(i=>i.product_id).length} produto(s) · {cartItems.filter(i=>i.product_id).reduce((a,i)=>a+i.quantity,0)} unidade(s)
+                {cartDelivery&&" · 🛵 Com entrega"}
               </div>
             )}
           </div>
