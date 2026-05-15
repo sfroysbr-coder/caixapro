@@ -451,18 +451,15 @@ export default function App(){
   const[showA,setShowA]=useState(false);
   const[toast,setToast]=useState(null);
   const[pwv,setPwv]=useState({});
-  // ── Novos estados v8 ──
   const[monthGoal,setMonthGoal]=useState(()=>{try{return localStorage.getItem("cpro:goal")||""}catch{return ""}});
-  const[showReceipt,setShowReceipt]=useState(null);       // comprovante venda
-  const[showClientHist,setShowClientHist]=useState(null); // histórico cliente
-  const[showReceivables,setShowReceivables]=useState(false);
-  const[receivables,setReceivables]=useState([]);
-  const[stockMoves,setStockMoves]=useState([]);
+  const[showReceipt,setShowReceipt]=useState(null);
+  const[showClientHist,setShowClientHist]=useState(null);
   const[showImportCalc,setShowImportCalc]=useState(false);
   const[importCalc,setImportCalc]=useState({totalCost:"",qty:"",extras:""});
-  // desconto no carrinho
+  const[receivables,setReceivables]=useState([]);
+  const[recForm,setRecForm]=useState({client_id:"",client_name:"",description:"",value:"",due_date:""});
   const[cartDiscount,setCartDiscount]=useState("");
-  const[cartDiscountType,setCartDiscountType]=useState("fixed"); // "fixed" | "percent" 
+  const[cartDiscountType,setCartDiscountType]=useState("fixed");
 
   const toast$=(msg,color="#10b981")=>{setToast({msg,color});setTimeout(()=>setToast(null),3500);};
 
@@ -505,7 +502,6 @@ export default function App(){
         supabase.from("clients").select("*").order("name"),
         supabase.from("suppliers").select("*").order("name"),
         supabase.from("app_users").select("id,username,display_name,role,active,last_login,created_at").order("created_at",{ascending:false}),
-        supabase.from("receivables").select("*").order("due_date",{ascending:true}),
       ]);
       if(a.data)setProds(a.data);if(b.data)setSales(b.data);if(c.data)setCash(c.data);
       if(d.data)setClients(d.data);if(e.data)setSupp(e.data);if(f.data)setUsers(f.data);
@@ -518,7 +514,7 @@ export default function App(){
 
   useEffect(()=>{
     if(!cu)return;load();
-    const tbls=["products","sales","cash_transactions","clients","suppliers","app_users","receivables","stock_movements"];
+    const tbls=["products","sales","cash_transactions","clients","suppliers","app_users"];
     const subs=tbls.map((t,i)=>supabase.channel(`ch${i}`).on("postgres_changes",{event:"*",schema:"public",table:t},load).subscribe());
     return()=>subs.forEach(s=>s.unsubscribe());
   },[cu,load]);
@@ -563,10 +559,8 @@ export default function App(){
   const cartSubtotal=cartItems.reduce((a,i)=>a+i.unit_price*i.quantity,0);
   const cartFreightVal=parseFloat(cartFreight)||0;
   const cartDeliveryCostVal=cartDelivery?(parseFloat(cartDeliveryCost)||0):0;
-  const cartDiscountVal=cartDiscountType==="percent"
-    ? cartSubtotal*(parseFloat(cartDiscount)||0)/100
-    : (parseFloat(cartDiscount)||0);
-  const cartTotal=Math.max(0,cartSubtotal-cartDiscountVal)+cartFreightVal; // total cobrado do cliente
+  const cartDiscountVal=cartDiscountType==="percent"?cartSubtotal*(parseFloat(cartDiscount)||0)/100:(parseFloat(cartDiscount)||0);
+  const cartTotal=Math.max(0,cartSubtotal-cartDiscountVal)+cartFreightVal;
 
   // CRUD
   const registerSale=async()=>{
@@ -588,9 +582,7 @@ export default function App(){
     const clientId=cartClient.id||null;
     const freight=parseFloat(cartFreight)||0;
     const subtotal=validItems.reduce((a,i)=>a+i.unit_price*i.quantity,0);
-    const discount=cartDiscountType==="percent"
-      ? subtotal*(parseFloat(cartDiscount)||0)/100
-      : (parseFloat(cartDiscount)||0);
+    const discount=cartDiscountType==="percent"?subtotal*(parseFloat(cartDiscount)||0)/100:(parseFloat(cartDiscount)||0);
     const grandTotal=Math.max(0,subtotal-discount)+freight;
     const desc=validItems.map(i=>`${i.product_name}(${i.quantity})`).join(", ");
 
@@ -607,7 +599,6 @@ export default function App(){
         total_price:i.unit_price*i.quantity,
         notes:cartNotes||null,
         payment_method:cartPayment,
-        discount:discount>0?discount:null,
         added_by:cu.display_name,
         date:today(),
         // batch_id para agrupar itens da mesma venda
@@ -729,41 +720,33 @@ export default function App(){
     }catch(ex){toast$("Erro de conexão: "+ex.message,"#f56565");}
   };
 
-  // ── RECEBÍVEIS ──
+  // ── RECEBÍVEIS ──────────────────────────────────────────────────
   const loadReceivables=async()=>{
     const{data}=await supabase.from("receivables").select("*").order("due_date",{ascending:true});
     if(data)setReceivables(data);
   };
-  const addReceivable=async(rec)=>{
-    await supabase.from("receivables").insert([{id:uid(),...rec,added_by:cu.display_name,created_at:nowISO()}]);
-    loadReceivables();toast$("Conta a receber registrada!");
+  const addReceivable=async()=>{
+    if(!recForm.description||!recForm.value){toast$("Preencha descrição e valor.","#f56565");return;}
+    await supabase.from("receivables").insert([{id:uid(),client_id:recForm.client_id||null,client_name:recForm.client_name||null,description:recForm.description,value:parseFloat(recForm.value),due_date:recForm.due_date||null,paid:false,added_by:cu.display_name,created_at:nowISO()}]);
+    setRecForm({client_id:"",client_name:"",description:"",value:"",due_date:""});
+    loadReceivables();toast$("Conta registrada!");
   };
   const payReceivable=async(id)=>{
-    await supabase.from("receivables").update({paid:true,paid_date:today()}).eq("id",id);
-    // lança entrada no caixa
     const rec=receivables.find(r=>r.id===id);
-    if(rec){
-      await supabase.from("cash_transactions").insert([{id:uid(),description:`Recebimento · ${rec.description}${rec.client_name?` · ${rec.client_name}`:""}`,value:rec.value,type:"entrada",category:"Recebimento",added_by:cu.display_name,date:today()}]);
-    }
-    loadReceivables();toast$("✅ Recebimento registrado no caixa!");
+    await supabase.from("receivables").update({paid:true,paid_date:today()}).eq("id",id);
+    if(rec)await supabase.from("cash_transactions").insert([{id:uid(),description:"Recebimento · "+rec.description+(rec.client_name?" · "+rec.client_name:""),value:rec.value,type:"entrada",category:"Recebimento",added_by:cu.display_name,date:today()}]);
+    loadReceivables();toast$("✅ Recebido e lançado no caixa!");
   };
   const deleteReceivable=async(id)=>{
     await supabase.from("receivables").delete().eq("id",id);
     loadReceivables();toast$("Removido.","#f59e0b");
   };
-
-  // ── MOVIMENTAÇÃO ESTOQUE ──
-  const loadStockMoves=async(productId)=>{
-    const{data}=await supabase.from("stock_movements")
-      .select("*").eq("product_id",productId)
-      .order("created_at",{ascending:false}).limit(30);
-    if(data)setStockMoves(data);
+  const saveClient=async()=>{
+    await supabase.from("clients").update({name:editing.name,email:editing.email,phone:editing.phone,notes:editing.notes,dose:editing.dose||null,interval_days:parseInt(editing.interval_days)||7,treatment_start:editing.treatment_start||null,treatment_notes:editing.treatment_notes||null}).eq("id",editing.id);
+    toast$("Cliente atualizado!");setModal(null);setEditing(null);
   };
 
-  // ── COMPROVANTE ──
-  const printReceipt=(saleGroup)=>{setShowReceipt(saleGroup);};
-
-  const updateSale=async()=>{  const updateSale=async()=>{
+  const updateSale=async()=>{
     if(!editing)return;
     await supabase.from("sales").update({product_name:editing.product_name,client_name:editing.client_name||null,quantity:parseInt(editing.quantity)||1,unit_price:parseFloat(editing.unit_price)||0,total_price:(parseFloat(editing.unit_price)||0)*(parseInt(editing.quantity)||1),notes:editing.notes,payment_method:editing.payment_method}).eq("id",editing.id);
     toast$("Venda atualizada!");setModal(null);setEditing(null);
@@ -868,7 +851,7 @@ export default function App(){
       toast$("Cliente cadastrado!");setModal(null);setCf(FC);
     }catch(ex){toast$("Erro de conexão.","#f56565");}
   };
-  const saveClient=async()=>{await supabase.from("clients").update({name:editing.name,email:editing.email,phone:editing.phone,notes:editing.notes,dose:editing.dose||null,interval_days:parseInt(editing.interval_days)||7,treatment_start:editing.treatment_start||null,treatment_notes:editing.treatment_notes||null}).eq("id",editing.id);toast$("Cliente atualizado!");setModal(null);setEditing(null);};
+
   const delClient=async id=>{await supabase.from("clients").delete().eq("id",id);toast$("Removido.","#f59e0b");};
 
   const addSupp=async()=>{
@@ -997,44 +980,36 @@ export default function App(){
               {lowStk.length>0&&<p style={{fontSize:".73rem",color:"#f59e0b"}}>🟡 Baixo: {lowStk.map(p=>`${p.name}(${p.stock_qty})`).join(", ")}</p>}
             </div>
           )}
-
           {/* Meta mensal */}
           {(()=>{
             const goal=parseFloat(monthGoal)||0;
-            const now=new Date();
-            const startM=new Date(now.getFullYear(),now.getMonth(),1);
-            const monthRev=cashTx.filter(t=>t.type==="entrada"&&new Date(t.created_at)>=startM).reduce((a,t)=>a+t.value,0);
+            const monthStart=new Date(new Date().getFullYear(),new Date().getMonth(),1);
+            const monthRev=cashTx.filter(t=>t.type==="entrada"&&new Date(t.created_at)>=monthStart).reduce((a,t)=>a+t.value,0);
             const pct=goal>0?Math.min((monthRev/goal)*100,100):0;
+            const pctStr=fmtPct(pct);
+            const barColor=pct>=100?"linear-gradient(90deg,#10b981,#059669)":pct>=70?"linear-gradient(90deg,#f59e0b,#d97706)":"linear-gradient(90deg,#4f5ef0,#8b44f0)";
             const overdue=receivables.filter(r=>!r.paid&&r.due_date&&new Date(r.due_date)<new Date());
             const overdueVal=overdue.reduce((a,r)=>a+r.value,0);
             return(<>
               <div style={{background:"var(--card)",border:"1px solid var(--bdr)",borderRadius:".75rem",padding:".9rem 1rem",marginBottom:".75rem"}}>
                 <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:".5rem"}}>
-                  <div style={{fontFamily:"'Syne',sans-serif",fontWeight:700,fontSize:".8rem",color:"var(--tx2)",display:"flex",alignItems:"center",gap:".3rem"}}>
-                    🎯 Meta Mensal
-                  </div>
+                  <span style={{fontFamily:"'Syne',sans-serif",fontWeight:700,fontSize:".8rem",color:"var(--tx2)"}}>🎯 Meta Mensal</span>
                   <div style={{display:"flex",alignItems:"center",gap:".5rem"}}>
                     <span style={{fontSize:".75rem",color:"#10b981",fontWeight:700}}>{fmt(monthRev)}</span>
                     <span style={{fontSize:".7rem",color:"var(--tx5)"}}>de</span>
-                    <input
-                      type="number" min="0" step="100"
-                      value={monthGoal}
-                      onChange={e=>{setMonthGoal(e.target.value);try{localStorage.setItem("cpro:goal",e.target.value)}catch{}}}
-                      placeholder="definir meta..."
-                      style={{width:110,background:"var(--inp)",border:"1px solid var(--bdr2)",borderRadius:".35rem",padding:".25rem .5rem",color:"var(--tx)",fontSize:".75rem",fontFamily:"'DM Sans',sans-serif",outline:"none"}}
-                    />
+                    <input type="number" min="0" step="100" value={monthGoal} onChange={e=>{setMonthGoal(e.target.value);try{localStorage.setItem("cpro:goal",e.target.value)}catch{}}} placeholder="meta..." style={{width:95,background:"var(--inp)",border:"1px solid var(--bdr2)",borderRadius:".35rem",padding:".22rem .45rem",color:"var(--tx)",fontSize:".75rem",fontFamily:"'DM Sans',sans-serif",outline:"none"}}/>
                   </div>
                 </div>
-                <div style={{height:8,background:"var(--bdr)",borderRadius:4}}>
-                  <div style={{height:"100%",width:`${pct}%`,background:pct>=100?"linear-gradient(90deg,#10b981,#059669)":pct>=70?"linear-gradient(90deg,#f59e0b,#d97706)":"linear-gradient(90deg,#4f5ef0,#8b44f0)",borderRadius:4,transition:"width .6s"}}/>
+                <div style={{height:7,background:"var(--bdr)",borderRadius:4}}>
+                  <div style={{height:"100%",width:pct+"%",background:barColor,borderRadius:4,transition:"width .6s"}}/>
                 </div>
-                <div style={{display:"flex",justifyContent:"space-between",marginTop:".3rem",fontSize:".65rem",color:"var(--sub)"}}>
-                  <span>{fmtPct(pct)} atingido</span>
+                <div style={{display:"flex",justifyContent:"space-between",marginTop:".28rem",fontSize:".63rem",color:"var(--sub)"}}>
+                  <span>{pctStr} atingido</span>
                   {goal>0&&<span style={{color:pct>=100?"#10b981":"var(--sub)"}}>faltam {fmt(Math.max(0,goal-monthRev))}</span>}
                 </div>
               </div>
               {overdue.length>0&&(
-                <div onClick={()=>setShowReceivables(true)} style={{background:"var(--card)",border:"1px solid #f5656540",borderRadius:".75rem",padding:".75rem 1rem",marginBottom:".75rem",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+                <div onClick={()=>setTab("recebiveis")} style={{background:"var(--card)",border:"1px solid #f5656540",borderRadius:".75rem",padding:".65rem 1rem",marginBottom:".75rem",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
                   <div style={{display:"flex",alignItems:"center",gap:".5rem",color:"#f56565"}}>
                     <Ic n="warn" s={14}/>
                     <span style={{fontWeight:700,fontSize:".8rem"}}>{overdue.length} conta{overdue.length>1?"s":""} vencida{overdue.length>1?"s":""}</span>
@@ -1118,14 +1093,8 @@ export default function App(){
                     <div style={{fontSize:".63rem",color:"var(--tx5)"}}>{fmt(s.unit_price)}/un</div>
                   </div>
                   {canEdit&&<div style={{display:"flex",gap:".2rem"}}>
-                    <button onClick={()=>{
-                      const batch=s.batch_id?sales.filter(x=>x.batch_id===s.batch_id):[s];
-                      setShowReceipt(batch);
-                    }} style={{background:"none",border:"none",color:"#8b44f0",padding:".2rem"}} title="Comprovante"><Ic n="pdf" s={13}/></button>
-                    {s.client_name&&<button onClick={()=>{
-                      const msg=`Olá ${s.client_name}! ✅ Sua compra de *${s.product_name}* foi registrada.%0AValor: *${fmt(s.total_price)}*%0APagamento: ${s.payment_method}%0AData: ${s.date}%0AObrigado! 🙏`;
-                      window.open(`https://wa.me/?text=${msg}`,"_blank");
-                    }} style={{background:"none",border:"none",color:"#25d366",padding:".2rem"}} title="WhatsApp"><span style={{fontSize:13}}>📱</span></button>}
+                    <button onClick={()=>{const batch=s.batch_id?sales.filter(x=>x.batch_id===s.batch_id):[s];setShowReceipt(batch);}} style={{background:"none",border:"none",color:"#8b44f0",padding:".2rem"}} title="Comprovante"><Ic n="pdf" s={13}/></button>
+                    {s.client_name&&<button onClick={()=>{const m="Olá "+s.client_name+"! ✅ Venda de *"+s.product_name+"* registrada. Total: *"+fmt(s.total_price)+"*. Pag: "+s.payment_method+". Obrigado!";window.open("https://wa.me/?text="+encodeURIComponent(m),"_blank");}} style={{background:"none",border:"none",color:"#25d366",padding:".2rem"}} title="WhatsApp"><span style={{fontSize:13}}>📱</span></button>}
                     <button onClick={()=>{setEditing({...s,quantity:String(s.quantity),unit_price:String(s.unit_price)});setModal("editSale");}} style={{background:"none",border:"none",color:"#4f5ef0",padding:".2rem"}} title="Editar"><Ic n="edit" s={13}/></button>
                     {isAdmin&&<button onClick={()=>deleteSale(s.id)} style={{background:"none",border:"none",color:"var(--tx6)",padding:".2rem"}} title="Excluir"><Ic n="trash" s={13}/></button>}
                   </div>}
@@ -1151,16 +1120,23 @@ export default function App(){
             <KCard label="Valor estoque" value={fmt(stockVal)} color="#f59e0b"/>
             {zeroStk.length>0&&<KCard label="Zerados" value={zeroStk.length} color="#f56565"/>}
           </div>
-          {/* Alerta vencimentos */}
           {(()=>{
-            const soon=products.filter(p=>{const d=daysUntil(p.expiry);return d!==null&&d<=30;}).sort((a,b)=>daysUntil(a.expiry)-daysUntil(b.expiry));
+            const soon=products.filter(p=>p.expiry&&daysUntil(p.expiry)!==null&&daysUntil(p.expiry)<=30).sort((a,b)=>daysUntil(a.expiry)-daysUntil(b.expiry));
             if(!soon.length)return null;
-            return <div style={{background:"var(--card)",border:"1px solid #f59e0b40",borderRadius:".65rem",padding:".75rem 1rem",marginBottom:".65rem"}}>
-              <div style={{fontWeight:700,fontSize:".78rem",color:"#f59e0b",marginBottom:".4rem",display:"flex",alignItems:"center",gap:".35rem"}}><Ic n="warn" s={13}/>⏰ Vencimentos nos próximos 30 dias</div>
-              <div style={{display:"flex",gap:".45rem",flexWrap:"wrap"}}>
-                {soon.map(p=>{const d=daysUntil(p.expiry);return <span key={p.id} style={{fontSize:".7rem",color:d<0?"#f56565":d<=7?"#f59e0b":"var(--tx3)",background:d<0?"#f5656515":"#f59e0b15",borderRadius:"99px",padding:".15rem .55rem",border:`1px solid ${d<0?"#f5656530":"#f59e0b30"}`}}>{p.name} · {d<0?"Vencido":d===0?"Hoje":d+"d"}</span>;})}
+            return(
+              <div style={{background:"var(--card)",border:"1px solid #f59e0b40",borderRadius:".65rem",padding:".7rem 1rem",marginBottom:".65rem"}}>
+                <div style={{fontWeight:700,fontSize:".78rem",color:"#f59e0b",marginBottom:".35rem",display:"flex",alignItems:"center",gap:".35rem"}}><Ic n="warn" s={13}/>⏰ Vencimentos nos próximos 30 dias</div>
+                <div style={{display:"flex",gap:".4rem",flexWrap:"wrap"}}>
+                  {soon.map(p=>{
+                    const d=daysUntil(p.expiry);
+                    const col=d<0?"#f56565":d<=7?"#f59e0b":"var(--tx3)";
+                    const bg=d<0?"#f5656515":"#f59e0b15";
+                    const bdr=d<0?"#f5656530":"#f59e0b30";
+                    return <span key={p.id} style={{fontSize:".7rem",color:col,background:bg,borderRadius:"99px",padding:".15rem .55rem",border:"1px solid "+bdr}}>{p.name} · {d<0?"Vencido":d===0?"Hoje":d+"d"}</span>;
+                  })}
+                </div>
               </div>
-            </div>;
+            );
           })()}
           <div style={{display:"flex",gap:".35rem",marginBottom:".65rem",overflowX:"auto"}}>
             {cats.map(c=><button key={c} onClick={()=>setFcat(c)} style={{padding:".28rem .65rem",borderRadius:"99px",border:`1px solid ${fcat===c?"#4f5ef0":"var(--bdr2)"}`,background:fcat===c?"#4f5ef020":"transparent",color:fcat===c?"#4f5ef0":"var(--navoff)",fontSize:".7rem",fontFamily:"'DM Sans',sans-serif",fontWeight:600,whiteSpace:"nowrap"}}>{c==="all"?"Todos":`${CATS[c]||"📋"} ${c}`}</button>)}
@@ -1182,7 +1158,7 @@ export default function App(){
                     </div>
                     <div style={{display:"flex",gap:".35rem",flexShrink:0,marginLeft:".65rem"}}>
                       {canEdit&&<><button onClick={()=>{setStF({product_id:p.id,qty:"",cost_total:"",notes:""});setModal("stockEntry");}} style={{background:"#0e1e0e",border:"1px solid #10b98130",borderRadius:".4rem",padding:".28rem .5rem",color:"#10b981",display:"flex",alignItems:"center"}}><Ic n="arrup" s={11}/></button>
-                      <button onClick={()=>{loadStockMoves(p.id);setEditing({...p,cost_per_unit:String(p.cost_per_unit),price_per_unit:String(p.price_per_unit),stock_qty:String(p.stock_qty),min_stock:String(p.min_stock||5),showMoves:true});setModal("editProd");}} style={{background:"none",border:"none",color:"#4f5ef0",padding:".2rem"}} title="Editar / Histórico"><Ic n="edit" s={13}/></button>
+                      <button onClick={()=>{setEditing({...p,cost_per_unit:String(p.cost_per_unit),price_per_unit:String(p.price_per_unit),stock_qty:String(p.stock_qty),min_stock:String(p.min_stock||5)});setModal("editProd");}} style={{background:"none",border:"none",color:"#4f5ef0",padding:".2rem"}}><Ic n="edit" s={13}/></button>
                       {isAdmin&&<button onClick={()=>delProduct(p.id)} style={{background:"none",border:"none",color:"var(--tx6)",padding:".2rem"}}><Ic n="trash" s={13}/></button>}</>}
                     </div>
                   </div>
@@ -1273,13 +1249,11 @@ export default function App(){
                       <div style={{fontSize:".67rem",color:"var(--tx5)"}}>{[c.phone,c.email].filter(Boolean).join(" · ")||"Sem contato"}</div>
                       {c.notes&&<div style={{fontSize:".65rem",color:"#8b44f0"}}>📝 {c.notes}</div>}
                       {c.dose&&(()=>{
-                        const daysSince=c.treatment_start?Math.floor((new Date()-new Date(c.treatment_start))/86400000):null;
-                        const interval=parseInt(c.interval_days)||7;
-                        const nextDose=daysSince!==null?interval-((daysSince)%interval):null;
-                        return <div style={{fontSize:".64rem",color:nextDose!==null&&nextDose<=2?"#f59e0b":"#10b981",marginTop:".1rem",display:"flex",alignItems:"center",gap:".3rem"}}>
-                          💉 Dose: {c.dose} · Intervalo: {interval}d
-                          {nextDose!==null&&<span style={{fontWeight:700}}>{nextDose<=0?"🔔 Próxima dose HOJE!":nextDose<=2?`⚠️ Próxima dose em ${nextDose}d`:`Próxima em ${nextDose}d`}</span>}
-                        </div>;
+                        const intv=parseInt(c.interval_days)||7;
+                        const started=c.treatment_start?Math.floor((new Date()-new Date(c.treatment_start))/86400000):null;
+                        const nxt=started!==null?intv-(started%intv):null;
+                        const col=nxt!==null&&nxt<=2?"#f59e0b":"#10b981";
+                        return <div style={{fontSize:".64rem",color:col,marginTop:".1rem"}}>💉 {c.dose} · {intv}d{nxt!==null?" · "+(nxt<=0?"🔔 Dose hoje!":nxt<=2?"⚠️ "+nxt+"d":"Próxima: "+nxt+"d"):""}</div>;
                       })()}
                     </div>
                   </div>
@@ -1290,9 +1264,8 @@ export default function App(){
                     </div>}
                     <div style={{display:"flex",gap:".3rem"}}>
                       <button onClick={()=>setShowClientHist(c)} style={{background:"none",border:"none",color:"#8b44f0",padding:".2rem"}} title="Histórico"><Ic n="analytics" s={13}/></button>
-                      {c.phone&&<button onClick={()=>{const msg=`Olá ${c.name}! Como está o seu tratamento? Estamos à disposição. 💉`;window.open(`https://wa.me/55${c.phone.replace(/\D/g,"")}?text=${encodeURIComponent(msg)}`,"_blank");}} style={{background:"none",border:"none",color:"#25d366",padding:".2rem"}} title="WhatsApp"><span style={{fontSize:13}}>📱</span></button>}
-                      {canEdit&&<><button onClick={()=>{setEditing({...c});setModal("editCliente");}} style={{background:"none",border:"none",color:"#4f5ef0",padding:".2rem"}}><Ic n="edit" s={13}/></button>
-                      {isAdmin&&<button onClick={()=>delClient(c.id)} style={{background:"none",border:"none",color:"var(--tx6)",padding:".2rem"}}><Ic n="trash" s={13}/></button>}</>}
+                      {c.phone&&<button onClick={()=>{const m="Olá "+c.name+"! Como está o tratamento? Estamos à disposição 💉";window.open("https://wa.me/55"+c.phone.replace(/[^0-9]/g,"")+"?text="+encodeURIComponent(m),"_blank");}} style={{background:"none",border:"none",color:"#25d366",padding:".2rem"}} title="WhatsApp"><span style={{fontSize:13}}>📱</span></button>}
+                      {canEdit&&<><button onClick={()=>{setEditing({...c});setModal("editCliente");}} style={{background:"none",border:"none",color:"#4f5ef0",padding:".2rem"}}><Ic n="edit" s={13}/></button>{isAdmin&&<button onClick={()=>delClient(c.id)} style={{background:"none",border:"none",color:"var(--tx6)",padding:".2rem"}}><Ic n="trash" s={13}/></button>}</>}
                     </div>
                   </div>
                 </div>
@@ -1338,76 +1311,6 @@ export default function App(){
         </>)}
 
         {/* ══ USUÁRIOS ══ */}
-        {/* ══ A RECEBER ══ */}
-        {tab==="recebiveis"&&(()=>{
-          const pendentes=receivables.filter(r=>!r.paid);
-          const vencidos=pendentes.filter(r=>r.due_date&&new Date(r.due_date)<new Date());
-          const totalPend=pendentes.reduce((a,r)=>a+r.value,0);
-          const[recForm,setRecForm]=React.useState({client_id:"",client_name:"",description:"",value:"",due_date:"",notes:""});
-          return(<>
-            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:".75rem",flexWrap:"wrap",gap:".5rem"}}>
-              <h2 style={{fontFamily:"'Syne',sans-serif",fontWeight:800,fontSize:"1rem",color:"var(--tx)"}}>💰 Contas a Receber</h2>
-            </div>
-            <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:".6rem",marginBottom:".75rem"}}>
-              <KCard label="Em aberto" value={fmtN(pendentes.length)} sub={fmt(totalPend)} color="#4f5ef0"/>
-              <KCard label="Vencidas" value={fmtN(vencidos.length)} sub={fmt(vencidos.reduce((a,r)=>a+r.value,0))} color="#f56565"/>
-              <KCard label="Recebido (mês)" value={fmt(receivables.filter(r=>r.paid&&r.paid_date===today()).reduce((a,r)=>a+r.value,0))} color="#10b981"/>
-            </div>
-            {/* Form nova conta */}
-            <div style={{background:"var(--card)",border:"1px solid var(--bdr)",borderRadius:".75rem",padding:"1rem",marginBottom:".75rem"}}>
-              <div style={{fontFamily:"'Syne',sans-serif",fontWeight:700,fontSize:".8rem",color:"var(--tx2)",marginBottom:".65rem"}}>➕ Registrar nova conta a receber</div>
-              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:".5rem",marginBottom:".5rem"}}>
-                <Field label="Cliente" t={{sub:"var(--sub)",text5:"var(--tx5)"}}>
-                  <select value={recForm.client_id} onChange={e=>{const c=clients.find(x=>x.id===e.target.value);setRecForm(f=>({...f,client_id:e.target.value,client_name:c?.name||""}));}} style={IS}>
-                    <option value="">Selecione...</option>
-                    {clients.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}
-                  </select>
-                </Field>
-                <Field label="Vencimento" t={{sub:"var(--sub)",text5:"var(--tx5)"}}>
-                  <input type="date" value={recForm.due_date} onChange={e=>setRecForm(f=>({...f,due_date:e.target.value}))} style={IS}/>
-                </Field>
-              </div>
-              <div style={{display:"grid",gridTemplateColumns:"2fr 1fr",gap:".5rem",marginBottom:".5rem"}}>
-                <Field label="Descrição" t={{sub:"var(--sub)",text5:"var(--tx5)"}}>
-                  <input value={recForm.description} onChange={e=>setRecForm(f=>({...f,description:e.target.value}))} placeholder="Ex: Venda parcelada, fiado..." style={IS}/>
-                </Field>
-                <Field label="Valor (R$)" t={{sub:"var(--sub)",text5:"var(--tx5)"}}>
-                  <input type="number" min="0" step="0.01" value={recForm.value} onChange={e=>setRecForm(f=>({...f,value:e.target.value}))} placeholder="0,00" style={IS}/>
-                </Field>
-              </div>
-              <Btn v="ok" onClick={async()=>{
-                if(!recForm.description||!recForm.value){toast$("Preencha descrição e valor.","#f56565");return;}
-                await addReceivable(recForm);
-                setRecForm({client_id:"",client_name:"",description:"",value:"",due_date:"",notes:""});
-              }}><Ic n="save" s={13}/>Registrar</Btn>
-            </div>
-            {/* Lista */}
-            <div style={{background:"var(--card)",border:"1px solid var(--bdr)",borderRadius:".75rem"}}>
-              {receivables.length===0?<p style={{color:"var(--tx5)",textAlign:"center",padding:"2.5rem 0",fontSize:".8rem"}}>Nenhuma conta registrada.</p>
-              :receivables.map(r=>{
-                const overdue=!r.paid&&r.due_date&&new Date(r.due_date)<new Date();
-                return(
-                  <div key={r.id} style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:".72rem 1rem",borderBottom:"1px solid var(--sep)",background:overdue?"#f5656506":"transparent"}}>
-                    <div style={{flex:1,minWidth:0}}>
-                      <div style={{display:"flex",alignItems:"center",gap:".4rem",marginBottom:".15rem"}}>
-                        <span style={{fontWeight:700,fontSize:".83rem",color:r.paid?"var(--tx5)":"var(--tx)",textDecoration:r.paid?"line-through":"none"}}>{r.description}</span>
-                        {r.paid&&<Badge color="#10b981" sm>✅ Recebido</Badge>}
-                        {overdue&&<Badge color="#f56565" sm>⚠️ Vencido</Badge>}
-                      </div>
-                      <div style={{fontSize:".67rem",color:"var(--tx5)"}}>{r.client_name||"Sem cliente"}{r.due_date&&` · Vcto: ${new Date(r.due_date+"T00:00:00").toLocaleDateString("pt-BR")}`}{r.paid_date&&` · Recebido: ${r.paid_date}`}</div>
-                    </div>
-                    <div style={{display:"flex",alignItems:"center",gap:".6rem",flexShrink:0,marginLeft:".75rem"}}>
-                      <span style={{fontWeight:700,fontFamily:"'Syne',sans-serif",color:r.paid?"#10b981":"#f59e0b",fontSize:".9rem"}}>{fmt(r.value)}</span>
-                      {!r.paid&&<button onClick={()=>payReceivable(r.id)} style={{background:"#10b98115",border:"1px solid #10b98130",borderRadius:".4rem",padding:".28rem .6rem",color:"#10b981",fontSize:".72rem",fontFamily:"'DM Sans',sans-serif",fontWeight:600,cursor:"pointer"}}>✅ Recebido</button>}
-                      <button onClick={()=>deleteReceivable(r.id)} style={{background:"none",border:"none",color:"var(--tx6)",padding:".2rem",cursor:"pointer"}}><Ic n="trash" s={13}/></button>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </>);
-        })()}
-
         {tab==="usuarios"&&isAdmin&&(<>
           <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:".75rem"}}>
             <h2 style={{fontFamily:"'Syne',sans-serif",fontWeight:800,fontSize:"1rem",color:"var(--tx)"}}>Usuários</h2>
@@ -1608,25 +1511,22 @@ export default function App(){
           )}
         </div>
 
-        {/* ── DESCONTO ── */}
         {cartSubtotal>0&&(
           <div style={{background:"var(--pill)",borderRadius:".5rem",padding:".65rem .85rem",marginBottom:"1rem"}}>
             <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:".45rem"}}>
               <div style={{fontSize:".68rem",color:"var(--sub)",textTransform:"uppercase",letterSpacing:".06em",fontWeight:700}}>🏷️ Desconto</div>
               <div style={{display:"flex",gap:".25rem"}}>
-                {["fixed","percent"].map(t=>(
-                  <button key={t} onClick={()=>setCartDiscountType(t)} style={{padding:".2rem .55rem",borderRadius:".3rem",fontSize:".68rem",fontWeight:600,fontFamily:"'DM Sans',sans-serif",border:`1px solid ${cartDiscountType===t?"#4f5ef0":"var(--bdr2)"}`,background:cartDiscountType===t?"#4f5ef020":"transparent",color:cartDiscountType===t?"#4f5ef0":"var(--navoff)"}}>
-                    {t==="fixed"?"R$":"%"}
+                {["fixed","percent"].map(dt=>(
+                  <button key={dt} onClick={()=>setCartDiscountType(dt)} style={{padding:".2rem .55rem",borderRadius:".3rem",fontSize:".68rem",fontWeight:600,fontFamily:"'DM Sans',sans-serif",border:"1px solid "+(cartDiscountType===dt?"#4f5ef0":"var(--bdr2)"),background:cartDiscountType===dt?"#4f5ef020":"transparent",color:cartDiscountType===dt?"#4f5ef0":"var(--navoff)"}}>
+                    {dt==="fixed"?"R$":"%"}
                   </button>
                 ))}
               </div>
             </div>
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:".5rem",alignItems:"center"}}>
-              <input type="number" min="0" step="0.01" value={cartDiscount} onChange={e=>setCartDiscount(e.target.value)} placeholder={cartDiscountType==="percent"?"ex: 10 (%)":"ex: 20,00 (R$)"} style={{...IS,fontSize:".83rem"}}/>
-              <div style={{fontSize:".75rem"}}>
-                {cartDiscountVal>0
-                  ?<span style={{color:"#4f5ef0",fontWeight:600}}>- {fmt(cartDiscountVal)} no total</span>
-                  :<span style={{color:"var(--tx5)"}}>Sem desconto</span>}
+              <input type="number" min="0" step="0.01" value={cartDiscount} onChange={e=>setCartDiscount(e.target.value)} placeholder={cartDiscountType==="percent"?"ex: 10 (%)":"ex: 20,00 (R$)"} style={IS}/>
+              <div style={{fontSize:".75rem",color:cartDiscountVal>0?"#4f5ef0":"var(--tx5)",fontWeight:cartDiscountVal>0?700:400}}>
+                {cartDiscountVal>0?"- "+fmt(cartDiscountVal)+" no total":"Sem desconto"}
               </div>
             </div>
           </div>
@@ -1678,7 +1578,7 @@ export default function App(){
             )}
             {cartDiscountVal>0&&(
               <div style={{display:"flex",justifyContent:"space-between",fontSize:".78rem"}}>
-                <span style={{color:"var(--tx4)"}}>🏷️ Desconto {cartDiscountType==="percent"?`(${cartDiscount}%)`:"(fixo)"}</span>
+                <span style={{color:"var(--tx4)"}}>🏷️ Desconto</span>
                 <span style={{color:"#4f5ef0",fontWeight:600}}>- {fmt(cartDiscountVal)}</span>
               </div>
             )}
@@ -1847,13 +1747,10 @@ export default function App(){
       <R2><Inp label="Telefone" type="tel" value={editing.phone||""} onChange={e=>setEditing(v=>({...v,phone:e.target.value}))}/><Inp label="E-mail" type="email" value={editing.email||""} onChange={e=>setEditing(v=>({...v,email:e.target.value}))}/></R2>
       <Inp label="Observações" value={editing.notes||""} onChange={e=>setEditing(v=>({...v,notes:e.target.value}))}/>
       <div style={{borderTop:"1px solid var(--bdr)",paddingTop:".85rem",marginTop:".25rem"}}>
-        <div style={{fontWeight:700,fontSize:".78rem",color:"#4f5ef0",marginBottom:".65rem",display:"flex",gap:".35rem",alignItems:"center"}}><Ic n="syringe" s={13}/>💉 Protocolo de Tratamento (opcional)</div>
-        <R2>
-          <Inp label="Dose atual" placeholder="Ex: 2.5mg, 5mg, 7.5mg..." value={editing.dose||""} onChange={e=>setEditing(v=>({...v,dose:e.target.value}))}/>
-          <Inp label="Intervalo (dias)" type="number" min="1" placeholder="7" value={editing.interval_days||""} onChange={e=>setEditing(v=>({...v,interval_days:e.target.value}))}/>
-        </R2>
-        <Inp label="Data início tratamento" type="date" value={editing.treatment_start||""} onChange={e=>setEditing(v=>({...v,treatment_start:e.target.value}))}/>
-        <Inp label="Notas do tratamento" placeholder="Ex: Responde bem à dose 5mg, próxima revisão em..." value={editing.treatment_notes||""} onChange={e=>setEditing(v=>({...v,treatment_notes:e.target.value}))}/>
+        <div style={{fontWeight:700,fontSize:".78rem",color:"#4f5ef0",marginBottom:".65rem"}}>💉 Protocolo de Tratamento (opcional)</div>
+        <R2><Inp label="Dose atual" placeholder="Ex: 2.5mg, 5mg..." value={editing.dose||""} onChange={e=>setEditing(v=>({...v,dose:e.target.value}))}/><Inp label="Intervalo (dias)" type="number" min="1" placeholder="7" value={editing.interval_days||""} onChange={e=>setEditing(v=>({...v,interval_days:e.target.value}))}/></R2>
+        <Inp label="Início do tratamento" type="date" value={editing.treatment_start||""} onChange={e=>setEditing(v=>({...v,treatment_start:e.target.value}))}/>
+        <Inp label="Notas do protocolo" placeholder="Ex: Responde bem à dose 5mg..." value={editing.treatment_notes||""} onChange={e=>setEditing(v=>({...v,treatment_notes:e.target.value}))}/>
       </div>
       <div style={{display:"flex",gap:".5rem",justifyContent:"space-between"}}>
         {isAdmin&&<Btn v="del" sm onClick={()=>{delClient(editing.id);setModal(null);setEditing(null);}}><Ic n="trash" s={12}/>Excluir</Btn>}
@@ -1889,126 +1786,202 @@ export default function App(){
       </div>
     </Modal>)}
 
+    {/* ══ TAB RECEBÍVEIS ══ */}
+    {tab==="recebiveis"&&(
+      <div style={{animation:"fadeUp .4s ease"}}>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:".75rem",flexWrap:"wrap",gap:".5rem"}}>
+          <h2 style={{fontFamily:"'Syne',sans-serif",fontWeight:800,fontSize:"1rem",color:"var(--tx)"}}>💰 Contas a Receber</h2>
+        </div>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:".6rem",marginBottom:".75rem"}}>
+          <KCard label="Em aberto" value={fmtN(receivables.filter(r=>!r.paid).length)} sub={fmt(receivables.filter(r=>!r.paid).reduce((a,r)=>a+r.value,0))} color="#4f5ef0"/>
+          <KCard label="Vencidas" value={fmtN(receivables.filter(r=>!r.paid&&r.due_date&&new Date(r.due_date)<new Date()).length)} color="#f56565"/>
+          <KCard label="Recebido hoje" value={fmt(receivables.filter(r=>r.paid&&r.paid_date===today()).reduce((a,r)=>a+r.value,0))} color="#10b981"/>
+        </div>
+        <div style={{background:"var(--card)",border:"1px solid var(--bdr)",borderRadius:".75rem",padding:"1rem",marginBottom:".75rem"}}>
+          <div style={{fontFamily:"'Syne',sans-serif",fontWeight:700,fontSize:".8rem",color:"var(--tx2)",marginBottom:".65rem"}}>➕ Nova conta a receber</div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:".5rem",marginBottom:".5rem"}}>
+            <div>
+              <div style={{fontSize:".68rem",color:"var(--sub)",textTransform:"uppercase",marginBottom:".3rem"}}>Cliente</div>
+              <select value={recForm.client_id} onChange={e=>{const c=clients.find(x=>x.id===e.target.value);setRecForm(f=>({...f,client_id:e.target.value,client_name:c?c.name:""}));}} style={IS}>
+                <option value="">Selecione...</option>
+                {clients.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
+            </div>
+            <div>
+              <div style={{fontSize:".68rem",color:"var(--sub)",textTransform:"uppercase",marginBottom:".3rem"}}>Vencimento</div>
+              <input type="date" value={recForm.due_date} onChange={e=>setRecForm(f=>({...f,due_date:e.target.value}))} style={IS}/>
+            </div>
+          </div>
+          <div style={{display:"grid",gridTemplateColumns:"2fr 1fr",gap:".5rem",marginBottom:".65rem"}}>
+            <div>
+              <div style={{fontSize:".68rem",color:"var(--sub)",textTransform:"uppercase",marginBottom:".3rem"}}>Descrição *</div>
+              <input value={recForm.description||""} onChange={e=>setRecForm(f=>({...f,description:e.target.value}))} placeholder="Ex: Venda parcelada, fiado..." style={IS}/>
+            </div>
+            <div>
+              <div style={{fontSize:".68rem",color:"var(--sub)",textTransform:"uppercase",marginBottom:".3rem"}}>Valor (R$) *</div>
+              <input type="number" min="0" step="0.01" value={recForm.value||""} onChange={e=>setRecForm(f=>({...f,value:e.target.value}))} placeholder="0,00" style={IS}/>
+            </div>
+          </div>
+          <Btn v="ok" onClick={addReceivable}><Ic n="save" s={13}/>Registrar</Btn>
+        </div>
+        <div style={{background:"var(--card)",border:"1px solid var(--bdr)",borderRadius:".75rem"}}>
+          {receivables.length===0
+            ?<p style={{color:"var(--tx5)",textAlign:"center",padding:"2.5rem 0",fontSize:".8rem"}}>Nenhuma conta registrada.</p>
+            :receivables.map(r=>{
+              const ov=!r.paid&&r.due_date&&new Date(r.due_date)<new Date();
+              return(
+                <div key={r.id} style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:".72rem 1rem",borderBottom:"1px solid var(--sep)",background:ov?"#f5656506":"transparent"}}>
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{display:"flex",alignItems:"center",gap:".4rem",marginBottom:".15rem"}}>
+                      <span style={{fontWeight:700,fontSize:".83rem",color:r.paid?"var(--tx5)":"var(--tx)",textDecoration:r.paid?"line-through":"none"}}>{r.description}</span>
+                      {r.paid&&<Badge color="#10b981" sm>✅ Recebido</Badge>}
+                      {ov&&<Badge color="#f56565" sm>⚠️ Vencido</Badge>}
+                    </div>
+                    <div style={{fontSize:".67rem",color:"var(--tx5)"}}>{r.client_name||"Sem cliente"}{r.due_date&&" · Vcto: "+new Date(r.due_date+"T00:00:00").toLocaleDateString("pt-BR")}{r.paid_date&&" · Pago: "+r.paid_date}</div>
+                  </div>
+                  <div style={{display:"flex",alignItems:"center",gap:".55rem",flexShrink:0,marginLeft:".75rem"}}>
+                    <span style={{fontWeight:700,fontFamily:"'Syne',sans-serif",color:r.paid?"#10b981":"#f59e0b",fontSize:".9rem"}}>{fmt(r.value)}</span>
+                    {!r.paid&&<button onClick={()=>payReceivable(r.id)} style={{background:"#10b98115",border:"1px solid #10b98130",borderRadius:".4rem",padding:".28rem .6rem",color:"#10b981",fontSize:".72rem",fontFamily:"'DM Sans',sans-serif",fontWeight:600,cursor:"pointer"}}>✅ Recebido</button>}
+                    <button onClick={()=>deleteReceivable(r.id)} style={{background:"none",border:"none",color:"var(--tx6)",padding:".2rem",cursor:"pointer"}}><Ic n="trash" s={13}/></button>
+                  </div>
+                </div>
+              );
+            })
+          }
+        </div>
+      </div>
+    )}
 
-    {/* ═══ COMPROVANTE ═══ */}
+    {/* ══ COMPROVANTE ══ */}
     {showReceipt&&(
       <Modal title="Comprovante de Venda" onClose={()=>setShowReceipt(null)} icon="pdf" wide>
-        <div id="receipt-content" style={{fontFamily:"'DM Sans',sans-serif"}}>
-          <div style={{textAlign:"center",marginBottom:"1.25rem",paddingBottom:"1rem",borderBottom:"1px solid var(--bdr)"}}>
-            <div style={{fontSize:"1.2rem",fontWeight:800,fontFamily:"'Syne',sans-serif",color:"var(--tx)"}}>CaixaPro · Tirzepatida</div>
-            <div style={{fontSize:".75rem",color:"var(--tx5)",marginTop:".2rem"}}>Comprovante de Venda</div>
-            <div style={{fontSize:".72rem",color:"var(--sub)",marginTop:".1rem"}}>{showReceipt[0]?.date}</div>
+        <div style={{textAlign:"center",marginBottom:"1.25rem",paddingBottom:"1rem",borderBottom:"1px solid var(--bdr)"}}>
+          <div style={{fontSize:"1.2rem",fontWeight:800,fontFamily:"'Syne',sans-serif",color:"var(--tx)"}}>CaixaPro · Tirzepatida</div>
+          <div style={{fontSize:".75rem",color:"var(--tx5)",marginTop:".15rem"}}>Comprovante de Venda · {showReceipt[0]&&showReceipt[0].date}</div>
+        </div>
+        {showReceipt[0]&&showReceipt[0].client_name&&(
+          <div style={{marginBottom:"1rem",padding:".6rem .85rem",background:"var(--pill)",borderRadius:".5rem"}}>
+            <div style={{fontSize:".65rem",color:"var(--sub)",textTransform:"uppercase",marginBottom:".12rem"}}>Cliente</div>
+            <div style={{fontWeight:700,color:"var(--tx)"}}>{showReceipt[0].client_name}</div>
           </div>
-          {showReceipt[0]?.client_name&&<div style={{marginBottom:"1rem",padding:".65rem .85rem",background:"var(--pill)",borderRadius:".5rem"}}>
-            <div style={{fontSize:".65rem",color:"var(--sub)",textTransform:"uppercase",marginBottom:".15rem"}}>Cliente</div>
-            <div style={{fontWeight:700,color:"var(--tx)",fontSize:".88rem"}}>{showReceipt[0].client_name}</div>
-          </div>}
-          <table style={{width:"100%",borderCollapse:"collapse",marginBottom:"1rem"}}>
-            <thead><tr style={{borderBottom:"1px solid var(--bdr)"}}>
-              {["Produto","Qtd","Preço unit.","Total"].map(h=><th key={h} style={{textAlign:"left",padding:".4rem .3rem",fontSize:".68rem",color:"var(--sub)",textTransform:"uppercase",fontWeight:600}}>{h}</th>)}
-            </tr></thead>
-            <tbody>
-              {showReceipt.map((s,i)=><tr key={i} style={{borderBottom:"1px solid var(--sep)"}}>
+        )}
+        <table style={{width:"100%",borderCollapse:"collapse",marginBottom:"1rem"}}>
+          <thead>
+            <tr style={{borderBottom:"1px solid var(--bdr)"}}>
+              {["Produto","Qtd","Preço","Total"].map(h=><th key={h} style={{textAlign:"left",padding:".4rem .3rem",fontSize:".68rem",color:"var(--sub)",textTransform:"uppercase"}}>{h}</th>)}
+            </tr>
+          </thead>
+          <tbody>
+            {showReceipt.map((s,i)=>(
+              <tr key={i} style={{borderBottom:"1px solid var(--sep)"}}>
                 <td style={{padding:".5rem .3rem",fontSize:".82rem",color:"var(--tx)"}}>{s.product_name}{s.unit_price===0&&" 🎁"}</td>
                 <td style={{padding:".5rem .3rem",fontSize:".82rem",color:"var(--tx3)"}}>{s.quantity}</td>
                 <td style={{padding:".5rem .3rem",fontSize:".82rem",color:"var(--tx3)"}}>{s.unit_price===0?"Cortesia":fmt(s.unit_price)}</td>
-                <td style={{padding:".5rem .3rem",fontSize:".82rem",fontWeight:700,color:"#10b981"}}>{s.unit_price===0?"R$ 0,00":fmt(s.total_price)}</td>
-              </tr>)}
-            </tbody>
-          </table>
-          <div style={{display:"flex",flexDirection:"column",gap:".3rem",padding:"1rem",background:"var(--pill)",borderRadius:".5rem",marginBottom:"1rem"}}>
-            <div style={{display:"flex",justifyContent:"space-between",fontSize:".82rem"}}>
-              <span style={{color:"var(--tx4)"}}>Subtotal</span>
-              <span style={{color:"var(--tx3)",fontWeight:600}}>{fmt(showReceipt.reduce((a,s)=>a+s.total_price,0))}</span>
-            </div>
-            <div style={{display:"flex",justifyContent:"space-between",borderTop:"1px solid var(--bdr)",paddingTop:".3rem"}}>
-              <span style={{fontWeight:700,color:"var(--tx)",fontFamily:"'Syne',sans-serif"}}>TOTAL</span>
-              <span style={{fontWeight:800,fontSize:"1.1rem",color:"#10b981",fontFamily:"'Syne',sans-serif"}}>{fmt(showReceipt.reduce((a,s)=>a+s.total_price,0))}</span>
-            </div>
-            {showReceipt[0]?.payment_method&&<div style={{fontSize:".73rem",color:"var(--sub)",textAlign:"right"}}>Pagamento: {showReceipt[0].payment_method}</div>}
+                <td style={{padding:".5rem .3rem",fontSize:".82rem",fontWeight:700,color:"#10b981"}}>{fmt(s.total_price)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        <div style={{background:"var(--pill)",borderRadius:".5rem",padding:"1rem",marginBottom:"1rem"}}>
+          <div style={{display:"flex",justifyContent:"space-between",borderTop:"1px solid var(--bdr)",paddingTop:".5rem",marginTop:".25rem"}}>
+            <span style={{fontWeight:700,color:"var(--tx)",fontFamily:"'Syne',sans-serif"}}>TOTAL</span>
+            <span style={{fontWeight:800,fontSize:"1.1rem",color:"#10b981",fontFamily:"'Syne',sans-serif"}}>{fmt(showReceipt.reduce((a,s)=>a+s.total_price,0))}</span>
           </div>
-          <div style={{textAlign:"center",fontSize:".68rem",color:"var(--tx6)"}}>Obrigado pela compra! · CaixaPro</div>
+          {showReceipt[0]&&<div style={{fontSize:".73rem",color:"var(--sub)",textAlign:"right",marginTop:".2rem"}}>Pagamento: {showReceipt[0].payment_method}</div>}
         </div>
-        <div style={{display:"flex",gap:".5rem",justifyContent:"flex-end",marginTop:"1rem",paddingTop:"1rem",borderTop:"1px solid var(--bdr)"}}>
+        <div style={{textAlign:"center",fontSize:".68rem",color:"var(--tx6)",marginBottom:"1rem"}}>Obrigado pela compra! · CaixaPro · Tirzepatida</div>
+        <div style={{display:"flex",gap:".5rem",justifyContent:"flex-end"}}>
           <Btn v="ghost" onClick={()=>setShowReceipt(null)}>Fechar</Btn>
           <Btn onClick={()=>window.print()}><Ic n="pdf" s={13}/>Imprimir</Btn>
         </div>
       </Modal>
     )}
 
-    {/* ═══ HISTÓRICO CLIENTE ═══ */}
+    {/* ══ HISTÓRICO CLIENTE ══ */}
     {showClientHist&&(
-      <Modal title={`Histórico · ${showClientHist.name}`} onClose={()=>setShowClientHist(null)} icon="analytics" wide>
+      <Modal title={"Histórico · "+(showClientHist.name||"")} onClose={()=>setShowClientHist(null)} icon="analytics" wide>
         {(()=>{
           const cs=sales.filter(s=>s.client_id===showClientHist.id||s.client_name===showClientHist.name);
           const total=cs.reduce((a,s)=>a+s.total_price,0);
-          const prods={};cs.forEach(s=>{prods[s.product_name]=(prods[s.product_name]||0)+s.quantity;});
-          const lastBuy=cs[0]?.date||null;
-          const daysSince=lastBuy?Math.floor((new Date()-new Date(cs[0].created_at))/86400000):null;
+          const prodMap={};
+          cs.forEach(s=>{prodMap[s.product_name]=(prodMap[s.product_name]||0)+s.quantity;});
+          const lastBuy=cs.length>0?cs[0].date:null;
+          const daysSince=cs.length>0?Math.floor((new Date()-new Date(cs[0].created_at))/86400000):null;
           return(<>
             <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:".6rem",marginBottom:"1rem"}}>
               <KCard label="Total gasto" value={fmt(total)} color="#10b981"/>
               <KCard label="Compras" value={cs.length} color="#4f5ef0"/>
-              <KCard label="Última compra" value={lastBuy||"—"} sub={daysSince!==null?`${daysSince}d atrás`:""} color={daysSince!==null&&daysSince>30?"#f59e0b":"#10b981"}/>
+              <KCard label="Última compra" value={lastBuy||"—"} sub={daysSince!==null?daysSince+"d atrás":""} color={daysSince!==null&&daysSince>30?"#f59e0b":"#10b981"}/>
             </div>
-            {showClientHist.dose&&<div style={{background:"linear-gradient(135deg,#4f5ef015,#10b98115)",border:"1px solid #4f5ef030",borderRadius:".65rem",padding:".85rem",marginBottom:"1rem"}}>
-              <div style={{fontWeight:700,fontSize:".8rem",color:"#4f5ef0",marginBottom:".5rem"}}>💉 Protocolo de Tratamento</div>
-              <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:".5rem"}}>
-                {[{l:"Dose atual",v:showClientHist.dose,c:"#4f5ef0"},{l:"Intervalo",v:`${showClientHist.interval_days||7} dias`,c:"#8b44f0"},{l:"Início",v:showClientHist.treatment_start?new Date(showClientHist.treatment_start+"T00:00:00").toLocaleDateString("pt-BR"):"—",c:"#10b981"}].map(m=>(
-                  <div key={m.l} style={{textAlign:"center"}}>
-                    <div style={{fontSize:".6rem",color:"var(--sub)",textTransform:"uppercase",marginBottom:".15rem"}}>{m.l}</div>
-                    <div style={{fontWeight:700,fontSize:".88rem",color:m.c,fontFamily:"'Syne',sans-serif"}}>{m.v}</div>
+            {showClientHist.dose&&(
+              <div style={{background:"linear-gradient(135deg,#4f5ef015,#10b98115)",border:"1px solid #4f5ef030",borderRadius:".65rem",padding:".85rem",marginBottom:"1rem"}}>
+                <div style={{fontWeight:700,fontSize:".8rem",color:"#4f5ef0",marginBottom:".5rem"}}>💉 Protocolo de Tratamento</div>
+                <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:".5rem",textAlign:"center"}}>
+                  {[{l:"Dose",v:showClientHist.dose,c:"#4f5ef0"},{l:"Intervalo",v:(showClientHist.interval_days||7)+"d",c:"#8b44f0"},{l:"Início",v:showClientHist.treatment_start?new Date(showClientHist.treatment_start+"T00:00:00").toLocaleDateString("pt-BR"):"—",c:"#10b981"}].map(m=>(
+                    <div key={m.l}>
+                      <div style={{fontSize:".6rem",color:"var(--sub)",textTransform:"uppercase",marginBottom:".12rem"}}>{m.l}</div>
+                      <div style={{fontWeight:700,fontSize:".88rem",color:m.c,fontFamily:"'Syne',sans-serif"}}>{m.v}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+            {Object.keys(prodMap).length>0&&(
+              <div style={{background:"var(--pill)",borderRadius:".6rem",padding:".75rem",marginBottom:"1rem"}}>
+                <div style={{fontWeight:700,fontSize:".78rem",color:"var(--tx2)",marginBottom:".5rem"}}>📦 Produtos mais comprados</div>
+                {Object.entries(prodMap).sort((a,b)=>b[1]-a[1]).map(([n,q])=>(
+                  <div key={n} style={{display:"flex",justifyContent:"space-between",padding:".3rem 0",borderBottom:"1px solid var(--sep)",fontSize:".78rem"}}>
+                    <span style={{color:"var(--tx)"}}>{n}</span>
+                    <span style={{color:"#4f5ef0",fontWeight:700}}>{q} un</span>
                   </div>
                 ))}
               </div>
-              {showClientHist.treatment_notes&&<div style={{fontSize:".73rem",color:"var(--tx4)",marginTop:".5rem"}}>📝 {showClientHist.treatment_notes}</div>}
-            </div>}
-            {Object.keys(prods).length>0&&<div style={{background:"var(--pill)",borderRadius:".6rem",padding:".75rem",marginBottom:"1rem"}}>
-              <div style={{fontWeight:700,fontSize:".78rem",color:"var(--tx2)",marginBottom:".5rem"}}>📦 Produtos mais comprados</div>
-              {Object.entries(prods).sort((a,b)=>b[1]-a[1]).map(([n,q])=><div key={n} style={{display:"flex",justifyContent:"space-between",padding:".3rem 0",borderBottom:"1px solid var(--sep)",fontSize:".78rem"}}><span style={{color:"var(--tx)"}}>{n}</span><span style={{color:"#4f5ef0",fontWeight:700}}>{q} un</span></div>)}
-            </div>}
+            )}
             <div style={{fontFamily:"'Syne',sans-serif",fontWeight:700,fontSize:".8rem",color:"var(--tx2)",marginBottom:".5rem"}}>🛒 Últimas compras</div>
             <div style={{background:"var(--card)",border:"1px solid var(--bdr)",borderRadius:".65rem"}}>
-              {cs.length===0?<p style={{color:"var(--tx5)",textAlign:"center",padding:"1.5rem",fontSize:".8rem"}}>Nenhuma compra.</p>
-              :cs.map(s=>(
-                <div key={s.id} style={{display:"flex",justifyContent:"space-between",padding:".6rem 1rem",borderBottom:"1px solid var(--sep)"}}>
-                  <div><div style={{fontSize:".82rem",color:"var(--tx)",fontWeight:600}}>{s.product_name}</div><div style={{fontSize:".65rem",color:"var(--tx5)"}}>{s.date} · {s.quantity}un · {s.payment_method}</div></div>
-                  <span style={{fontWeight:700,color:"#10b981",fontFamily:"'Syne',sans-serif",fontSize:".85rem"}}>{fmt(s.total_price)}</span>
-                </div>
-              ))}
+              {cs.length===0
+                ?<p style={{color:"var(--tx5)",textAlign:"center",padding:"1.5rem",fontSize:".8rem"}}>Nenhuma compra.</p>
+                :cs.map(s=>(
+                  <div key={s.id} style={{display:"flex",justifyContent:"space-between",padding:".6rem 1rem",borderBottom:"1px solid var(--sep)"}}>
+                    <div>
+                      <div style={{fontSize:".82rem",color:"var(--tx)",fontWeight:600}}>{s.product_name}</div>
+                      <div style={{fontSize:".65rem",color:"var(--tx5)"}}>{s.date} · {s.quantity}un · {s.payment_method}</div>
+                    </div>
+                    <span style={{fontWeight:700,color:"#10b981",fontFamily:"'Syne',sans-serif",fontSize:".85rem"}}>{fmt(s.total_price)}</span>
+                  </div>
+                ))
+              }
             </div>
           </>);
         })()}
       </Modal>
     )}
 
-    {/* ═══ CALCULADORA IMPORTAÇÃO ═══ */}
+    {/* ══ CALCULADORA IMPORTAÇÃO ══ */}
     {showImportCalc&&(
       <Modal title="🧮 Calculadora de Custo de Importação" onClose={()=>setShowImportCalc(false)}>
-        <div style={{background:"var(--infobox)",borderRadius:".45rem",padding:".55rem .8rem",marginBottom:".85rem",fontSize:".73rem",color:"#4f5ef0",display:"flex",gap:".3rem",alignItems:"center"}}><Ic n="info" s={12}/>Calcule o custo real por unidade considerando frete e taxas</div>
+        <div style={{background:"var(--infobox)",borderRadius:".45rem",padding:".55rem .8rem",marginBottom:".85rem",fontSize:".73rem",color:"#4f5ef0",display:"flex",gap:".3rem",alignItems:"center"}}><Ic n="info" s={12}/>Calcule o custo real por unidade incluindo frete e taxas</div>
         <Inp label="Custo total da remessa (R$) *" type="number" min="0" step="0.01" placeholder="Ex: 3500,00" value={importCalc.totalCost} onChange={e=>setImportCalc(v=>({...v,totalCost:e.target.value}))}/>
         <Inp label="Quantidade de unidades *" type="number" min="1" placeholder="Ex: 20 ampolas" value={importCalc.qty} onChange={e=>setImportCalc(v=>({...v,qty:e.target.value}))}/>
-        <Inp label="Extras (frete, taxas, câmbio) R$" hint="opcional" type="number" min="0" step="0.01" placeholder="Ex: 250,00" value={importCalc.extras} onChange={e=>setImportCalc(v=>({...v,extras:e.target.value}))}/>
-        {importCalc.totalCost&&importCalc.qty&&(()=>{
-          const total=(parseFloat(importCalc.totalCost)||0)+(parseFloat(importCalc.extras)||0);
+        <Inp label="Extras — frete, taxas, câmbio (R$)" hint="opcional" type="number" min="0" step="0.01" placeholder="Ex: 250,00" value={importCalc.extras} onChange={e=>setImportCalc(v=>({...v,extras:e.target.value}))}/>
+        {importCalc.totalCost&&importCalc.qty&&parseInt(importCalc.qty)>0&&(()=>{
+          const tot=(parseFloat(importCalc.totalCost)||0)+(parseFloat(importCalc.extras)||0);
           const qty=parseInt(importCalc.qty)||1;
-          const custo=total/qty;
-          const sugeridoMark2=(custo*2).toFixed(2);
-          const sugeridoMark3=(custo*3).toFixed(2);
-          return <div style={{background:"linear-gradient(135deg,#4f5ef015,#10b98115)",border:"1px solid #4f5ef030",borderRadius:".6rem",padding:"1rem",marginTop:".5rem"}}>
-            <div style={{fontWeight:700,fontSize:".82rem",color:"#4f5ef0",marginBottom:".65rem",fontFamily:"'Syne',sans-serif"}}>📊 Resultado</div>
-            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:".5rem",textAlign:"center"}}>
-              {[{l:"Custo/unidade",v:fmt(custo),c:"#f56565"},{l:"Preço c/ 100% markup",v:fmt(custo*2),c:"#f59e0b"},{l:"Preço c/ 200% markup",v:fmt(custo*3),c:"#10b981"}].map(m=>(
-                <div key={m.l} style={{background:"var(--pill)",borderRadius:".5rem",padding:".6rem .5rem"}}>
-                  <div style={{fontSize:".58rem",color:"var(--sub)",textTransform:"uppercase",marginBottom:".15rem"}}>{m.l}</div>
-                  <div style={{fontWeight:800,fontSize:".95rem",color:m.c,fontFamily:"'Syne',sans-serif"}}>{m.v}</div>
-                </div>
-              ))}
+          const custo=tot/qty;
+          return(
+            <div style={{background:"linear-gradient(135deg,#4f5ef015,#10b98115)",border:"1px solid #4f5ef030",borderRadius:".6rem",padding:"1rem",marginTop:".5rem"}}>
+              <div style={{fontWeight:700,fontSize:".82rem",color:"#4f5ef0",marginBottom:".65rem",fontFamily:"'Syne',sans-serif"}}>📊 Resultado</div>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:".5rem",textAlign:"center"}}>
+                {[{l:"Custo/unidade",v:fmt(custo),c:"#f56565"},{l:"Preço 100% markup",v:fmt(custo*2),c:"#f59e0b"},{l:"Preço 200% markup",v:fmt(custo*3),c:"#10b981"}].map(m=>(
+                  <div key={m.l} style={{background:"var(--pill)",borderRadius:".5rem",padding:".6rem .5rem"}}>
+                    <div style={{fontSize:".58rem",color:"var(--sub)",textTransform:"uppercase",marginBottom:".15rem"}}>{m.l}</div>
+                    <div style={{fontWeight:800,fontSize:".95rem",color:m.c,fontFamily:"'Syne',sans-serif"}}>{m.v}</div>
+                  </div>
+                ))}
+              </div>
+              <div style={{fontSize:".7rem",color:"var(--tx5)",marginTop:".65rem",textAlign:"center"}}>Total: {fmt(tot)} · {qty} unidades</div>
             </div>
-            <div style={{fontSize:".7rem",color:"var(--tx5)",marginTop:".65rem",textAlign:"center"}}>
-              Total remessa: {fmt(total)} · {qty} unidades
-            </div>
-          </div>;
+          );
         })()}
         <div style={{display:"flex",justifyContent:"flex-end",marginTop:"1rem"}}>
           <Btn v="ghost" onClick={()=>{setShowImportCalc(false);setImportCalc({totalCost:"",qty:"",extras:""});}}>Fechar</Btn>
