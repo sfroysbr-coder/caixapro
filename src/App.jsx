@@ -415,240 +415,6 @@ function Analytics({onClose,sales,cashTx,products,clients,dark}){
 
 
 // ─── TELA DE NOTÍCIAS ────────────────────────────────────────────────────────
-const NEWS_CATS = [
-  {key:"tirzepatida",   label:"💉 Tirzepatida",   emoji:"💉", q:"tirzepatida"},
-  {key:"mounjaro",      label:"💊 Mounjaro",       emoji:"💊", q:"mounjaro+tirzepatida"},
-  {key:"emagrecimento", label:"⚖️ Emagrecimento",  emoji:"⚖️", q:"emagrecimento+medicamento"},
-  {key:"glp1",          label:"🩺 Ozempic/GLP-1",  emoji:"🩺", q:"ozempic+semaglutida"},
-  {key:"saude",         label:"🥗 Saúde & Dieta",  emoji:"🥗", q:"saude+alimentacao+dieta"},
-];
-
-// Parse XML RSS manualmente no navegador
-function parseRSSXML(xml){
-  const items=[];
-  const blocks=xml.match(/<item[\s\S]*?<\/item>/g)||[];
-  for(const b of blocks.slice(0,18)){
-    const g=(tag)=>{
-      const r=new RegExp(`<${tag}[^>]*>(?:<!\\[CDATA\\[)?([\\s\\S]*?)(?:\\]\\]>)?<\/${tag}>`,"i");
-      const m=b.match(r);
-      return m?(m[1]||"").replace(/<[^>]*>/g,"").trim():"";
-    };
-    const title=g("title").replace(/\s+-\s+[\w\s,]+$/,"").trim();
-    const link=g("link")||g("guid");
-    const date=g("pubDate");
-    const source=g("source")||"Google News";
-    const desc=g("description").slice(0,220);
-    if(title&&link)items.push({title,link,date,source,description:desc});
-  }
-  return items;
-}
-
-function NewsScreen(){
-  const[articles,setArticles]=useState([]);
-  const[loading,setLoading]=useState(false);
-  const[error,setError]=useState(null);
-  const[cat,setCat]=useState("tirzepatida");
-  const[lastUpdate,setLastUpdate]=useState(null);
-  const[source,setSource]=useState("");
-
-  const fetchNews=useCallback(async(category)=>{
-    setLoading(true);setError(null);setArticles([]);setSource("");
-    const catObj=NEWS_CATS.find(c=>c.key===category)||NEWS_CATS[0];
-    const q=catObj.q;
-    const rssUrl=`https://news.google.com/rss/search?q=${encodeURIComponent(q)}&hl=pt-BR&gl=BR&ceid=BR:pt`;
-
-    // ── Tentativa 1: Netlify Function (server-side, sem CORS) ──
-    try{
-      const r=await fetch(`/.netlify/functions/news?category=${category}`,{signal:AbortSignal.timeout(5000)});
-      if(r.ok){
-        const data=await r.json();
-        if(data.ok&&data.items?.length>0){
-          setArticles(data.items);
-          setLastUpdate(new Date().toLocaleTimeString("pt-BR"));
-          setSource("Netlify Function");
-          setLoading(false);return;
-        }
-      }
-    }catch(_){}
-
-    // ── Tentativa 2: corsproxy.io (CORS proxy confiável) ──
-    try{
-      const proxy="https://corsproxy.io/?";
-      const r=await fetch(proxy+encodeURIComponent(rssUrl),{signal:AbortSignal.timeout(8000)});
-      if(r.ok){
-        const text=await r.text();
-        if(text.includes("<item>")){
-          const items=parseRSSXML(text);
-          if(items.length>0){
-            setArticles(items);
-            setLastUpdate(new Date().toLocaleTimeString("pt-BR"));
-            setSource("corsproxy.io");
-            setLoading(false);return;
-          }
-        }
-      }
-    }catch(_){}
-
-    // ── Tentativa 3: allorigins.win ──
-    try{
-      const r=await fetch(`https://api.allorigins.win/get?url=${encodeURIComponent(rssUrl)}`,{signal:AbortSignal.timeout(8000)});
-      if(r.ok){
-        const data=await r.json();
-        if(data.contents&&data.contents.includes("<item>")){
-          const items=parseRSSXML(data.contents);
-          if(items.length>0){
-            setArticles(items);
-            setLastUpdate(new Date().toLocaleTimeString("pt-BR"));
-            setSource("allorigins");
-            setLoading(false);return;
-          }
-        }
-      }
-    }catch(_){}
-
-    // ── Tentativa 4: rss2json.com ──
-    try{
-      const r=await fetch(`https://api.rss2json.com/v1/api.json?rss_url=${encodeURIComponent(rssUrl)}&count=18`,{signal:AbortSignal.timeout(8000)});
-      if(r.ok){
-        const data=await r.json();
-        if(data.status==="ok"&&data.items?.length>0){
-          const items=data.items.map(i=>({
-            title:(i.title||"").replace(/<[^>]*>/g,"").replace(/\s+-\s+[\w\s,]+$/,"").trim(),
-            link:i.link||"#",
-            date:i.pubDate,
-            source:i.author||"Google News",
-            description:(i.description||"").replace(/<[^>]*>/g,"").slice(0,220),
-          }));
-          setArticles(items);
-          setLastUpdate(new Date().toLocaleTimeString("pt-BR"));
-          setSource("rss2json");
-          setLoading(false);return;
-        }
-      }
-    }catch(_){}
-
-    // Todas falharam
-    setError("Não foi possível carregar as notícias. Verifique sua conexão com a internet e tente novamente.");
-    setLoading(false);
-  },[]);
-
-  useEffect(()=>{fetchNews(cat);},[cat,fetchNews]);
-
-  const fmtDate=d=>{
-    if(!d)return"";
-    try{
-      const dt=new Date(d);
-      const diff=Math.floor((new Date()-dt)/60000);
-      if(isNaN(diff))return d;
-      if(diff<1)return"agora";
-      if(diff<60)return diff+"min atrás";
-      if(diff<1440)return Math.floor(diff/60)+"h atrás";
-      return dt.toLocaleDateString("pt-BR");
-    }catch{return"";}
-  };
-
-  const catObj=NEWS_CATS.find(c=>c.key===cat)||NEWS_CATS[0];
-
-  return(
-    <div style={{animation:"fadeUp .4s ease"}}>
-      {/* Cabeçalho */}
-      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:"1rem",flexWrap:"wrap",gap:".5rem"}}>
-        <div>
-          <h2 style={{fontFamily:"'Syne',sans-serif",fontWeight:800,fontSize:"1.05rem",color:"var(--tx)"}}>📰 Notícias</h2>
-          <div style={{fontSize:".67rem",color:"var(--tx5)",marginTop:".1rem"}}>
-            Feed ao vivo · Tirzepatida, Emagrecimento & Saúde
-            {source&&<span style={{marginLeft:".5rem",color:"#10b981"}}>· via {source}</span>}
-          </div>
-        </div>
-        <div style={{display:"flex",alignItems:"center",gap:".5rem"}}>
-          {lastUpdate&&<span style={{fontSize:".63rem",color:"var(--sub)"}}>🕐 {lastUpdate}</span>}
-          <button onClick={()=>fetchNews(cat)} disabled={loading}
-            style={{display:"inline-flex",alignItems:"center",gap:".3rem",padding:".35rem .75rem",borderRadius:".4rem",background:"#4f5ef020",color:"#4f5ef0",border:"1px solid #4f5ef040",fontSize:".73rem",fontFamily:"'DM Sans',sans-serif",fontWeight:600}}>
-            <Ic n="sync" s={12}/>{loading?"Buscando...":"Atualizar"}
-          </button>
-        </div>
-      </div>
-
-      {/* Abas */}
-      <div style={{display:"flex",gap:".35rem",marginBottom:"1rem",overflowX:"auto",paddingBottom:".25rem"}}>
-        {NEWS_CATS.map(c=>(
-          <button key={c.key} onClick={()=>setCat(c.key)}
-            style={{padding:".3rem .75rem",borderRadius:"99px",border:`1px solid ${cat===c.key?"#4f5ef0":"var(--bdr2)"}`,background:cat===c.key?"#4f5ef0":"transparent",color:cat===c.key?"#fff":"var(--navoff)",fontSize:".72rem",fontFamily:"'DM Sans',sans-serif",fontWeight:600,whiteSpace:"nowrap",transition:"all .2s"}}>
-            {c.label}
-          </button>
-        ))}
-      </div>
-
-      {/* Skeleton */}
-      {loading&&(
-        <div style={{display:"grid",gap:".7rem"}}>
-          {[1,2,3,4,5].map(i=>(
-            <div key={i} style={{background:"var(--card)",border:"1px solid var(--bdr)",borderRadius:".75rem",padding:".9rem 1rem",display:"flex",gap:".85rem"}}>
-              <div style={{width:52,height:52,borderRadius:".5rem",background:"var(--bdr)",flexShrink:0,animation:"newsSkl 1.4s ease infinite"}}/>
-              <div style={{flex:1,display:"flex",flexDirection:"column",gap:".4rem"}}>
-                <div style={{height:13,background:"var(--bdr)",borderRadius:3,animation:"newsSkl 1.4s ease infinite"}}/>
-                <div style={{height:13,background:"var(--bdr)",borderRadius:3,width:"75%",animation:"newsSkl 1.4s ease infinite"}}/>
-                <div style={{height:10,background:"var(--bdr)",borderRadius:3,width:"40%",animation:"newsSkl 1.4s ease infinite"}}/>
-              </div>
-            </div>
-          ))}
-          <style>{`@keyframes newsSkl{0%,100%{opacity:.35}50%{opacity:.8}}`}</style>
-        </div>
-      )}
-
-      {/* Erro */}
-      {!loading&&error&&(
-        <div style={{background:"var(--card)",border:"1px solid #f59e0b40",borderRadius:".75rem",padding:"2rem 1.5rem",textAlign:"center"}}>
-          <div style={{fontSize:"2.5rem",marginBottom:".75rem"}}>📡</div>
-          <div style={{color:"#f59e0b",fontWeight:700,fontSize:".9rem",marginBottom:".5rem"}}>Sem conexão com os feeds</div>
-          <div style={{color:"var(--tx5)",fontSize:".78rem",maxWidth:380,margin:"0 auto .75rem",lineHeight:1.5}}>{error}</div>
-          <button onClick={()=>fetchNews(cat)}
-            style={{padding:".5rem 1.25rem",borderRadius:".45rem",background:"linear-gradient(135deg,#4f5ef0,#8b44f0)",color:"#fff",border:"none",fontFamily:"'DM Sans',sans-serif",fontWeight:600,fontSize:".83rem"}}>
-            Tentar novamente
-          </button>
-        </div>
-      )}
-
-      {/* Notícias */}
-      {!loading&&!error&&articles.length>0&&(
-        <div style={{display:"grid",gap:".65rem"}}>
-          {articles.map((a,i)=>(
-            <a key={i} href={a.link} target="_blank" rel="noopener noreferrer"
-              style={{textDecoration:"none",display:"block",borderRadius:".75rem"}}
-              onMouseEnter={e=>e.currentTarget.firstChild.style.borderColor="#4f5ef0"}
-              onMouseLeave={e=>e.currentTarget.firstChild.style.borderColor="var(--bdr)"}>
-              <div style={{background:"var(--card)",border:"1px solid var(--bdr)",borderRadius:".75rem",padding:".9rem 1rem",display:"flex",gap:".85rem",alignItems:"flex-start",transition:"border-color .2s,transform .15s"}}>
-                <div style={{width:52,height:52,borderRadius:".6rem",background:"linear-gradient(135deg,#4f5ef015,#8b44f015)",border:"1px solid #4f5ef020",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"1.6rem",flexShrink:0}}>
-                  {catObj.emoji}
-                </div>
-                <div style={{flex:1,minWidth:0}}>
-                  <div style={{fontWeight:700,fontSize:".84rem",color:"var(--tx)",lineHeight:1.4,marginBottom:".3rem",display:"-webkit-box",WebkitLineClamp:2,WebkitBoxOrient:"vertical",overflow:"hidden"}}>
-                    {a.title}
-                  </div>
-                  {a.description&&(
-                    <div style={{fontSize:".73rem",color:"var(--tx4)",lineHeight:1.4,marginBottom:".35rem",display:"-webkit-box",WebkitLineClamp:2,WebkitBoxOrient:"vertical",overflow:"hidden"}}>
-                      {a.description}
-                    </div>
-                  )}
-                  <div style={{display:"flex",alignItems:"center",gap:".5rem",flexWrap:"wrap"}}>
-                    {a.source&&<span style={{fontSize:".63rem",fontWeight:600,color:"#4f5ef0",background:"#4f5ef015",borderRadius:"99px",padding:".1rem .45rem",border:"1px solid #4f5ef030",maxWidth:160,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{a.source}</span>}
-                    {a.date&&<span style={{fontSize:".63rem",color:"var(--sub)"}}>{fmtDate(a.date)}</span>}
-                    <span style={{fontSize:".63rem",color:"#4f5ef0",marginLeft:"auto",fontWeight:600}}>Ler matéria →</span>
-                  </div>
-                </div>
-              </div>
-            </a>
-          ))}
-          <div style={{textAlign:"center",padding:".75rem",fontSize:".68rem",color:"var(--tx6)"}}>
-            {articles.length} notícias · Google News ·{" "}
-            <button onClick={()=>fetchNews(cat)} style={{background:"none",border:"none",color:"#4f5ef0",cursor:"pointer",fontSize:".68rem",fontFamily:"'DM Sans',sans-serif",fontWeight:600}}>Atualizar</button>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
 // ─── APP PRINCIPAL ────────────────────────────────────────────────────────────
 export default function App(){
   // Tema
@@ -685,6 +451,18 @@ export default function App(){
   const[showA,setShowA]=useState(false);
   const[toast,setToast]=useState(null);
   const[pwv,setPwv]=useState({});
+  // ── Novos estados v8 ──
+  const[monthGoal,setMonthGoal]=useState(()=>{try{return localStorage.getItem("cpro:goal")||""}catch{return ""}});
+  const[showReceipt,setShowReceipt]=useState(null);       // comprovante venda
+  const[showClientHist,setShowClientHist]=useState(null); // histórico cliente
+  const[showReceivables,setShowReceivables]=useState(false);
+  const[receivables,setReceivables]=useState([]);
+  const[stockMoves,setStockMoves]=useState([]);
+  const[showImportCalc,setShowImportCalc]=useState(false);
+  const[importCalc,setImportCalc]=useState({totalCost:"",qty:"",extras:""});
+  // desconto no carrinho
+  const[cartDiscount,setCartDiscount]=useState("");
+  const[cartDiscountType,setCartDiscountType]=useState("fixed"); // "fixed" | "percent" 
 
   const toast$=(msg,color="#10b981")=>{setToast({msg,color});setTimeout(()=>setToast(null),3500);};
 
@@ -727,9 +505,12 @@ export default function App(){
         supabase.from("clients").select("*").order("name"),
         supabase.from("suppliers").select("*").order("name"),
         supabase.from("app_users").select("id,username,display_name,role,active,last_login,created_at").order("created_at",{ascending:false}),
+        supabase.from("receivables").select("*").order("due_date",{ascending:true}),
       ]);
       if(a.data)setProds(a.data);if(b.data)setSales(b.data);if(c.data)setCash(c.data);
       if(d.data)setClients(d.data);if(e.data)setSupp(e.data);if(f.data)setUsers(f.data);
+      const{data:rv}=await supabase.from("receivables").select("*").order("due_date",{ascending:true});
+      if(rv)setReceivables(rv);
       setLastSync(new Date().toLocaleTimeString("pt-BR"));
     }catch(e){console.error(e);}
     setSyncing(false);
@@ -737,7 +518,7 @@ export default function App(){
 
   useEffect(()=>{
     if(!cu)return;load();
-    const tbls=["products","sales","cash_transactions","clients","suppliers","app_users"];
+    const tbls=["products","sales","cash_transactions","clients","suppliers","app_users","receivables","stock_movements"];
     const subs=tbls.map((t,i)=>supabase.channel(`ch${i}`).on("postgres_changes",{event:"*",schema:"public",table:t},load).subscribe());
     return()=>subs.forEach(s=>s.unsubscribe());
   },[cu,load]);
@@ -777,12 +558,15 @@ export default function App(){
   };
   const cartAddLine=()=>setCartItems(items=>[...items,newCartItem()]);
   const cartRemoveLine=key=>setCartItems(items=>items.length>1?items.filter(i=>i.key!==key):items);
-  const cartReset=()=>{setCartItems([newCartItem()]);setCartClient({id:"",name:""});setCartPayment("PIX");setCartNotes("");setCartFreight("");setCartDelivery(false);setCartDeliveryCost("");};
+  const cartReset=()=>{setCartItems([newCartItem()]);setCartClient({id:"",name:""});setCartPayment("PIX");setCartNotes("");setCartFreight("");setCartDelivery(false);setCartDeliveryCost("");setCartDiscount("");setCartDiscountType("fixed");};
 
   const cartSubtotal=cartItems.reduce((a,i)=>a+i.unit_price*i.quantity,0);
   const cartFreightVal=parseFloat(cartFreight)||0;
   const cartDeliveryCostVal=cartDelivery?(parseFloat(cartDeliveryCost)||0):0;
-  const cartTotal=cartSubtotal+cartFreightVal; // total cobrado do cliente
+  const cartDiscountVal=cartDiscountType==="percent"
+    ? cartSubtotal*(parseFloat(cartDiscount)||0)/100
+    : (parseFloat(cartDiscount)||0);
+  const cartTotal=Math.max(0,cartSubtotal-cartDiscountVal)+cartFreightVal; // total cobrado do cliente
 
   // CRUD
   const registerSale=async()=>{
@@ -804,7 +588,10 @@ export default function App(){
     const clientId=cartClient.id||null;
     const freight=parseFloat(cartFreight)||0;
     const subtotal=validItems.reduce((a,i)=>a+i.unit_price*i.quantity,0);
-    const grandTotal=subtotal+freight;
+    const discount=cartDiscountType==="percent"
+      ? subtotal*(parseFloat(cartDiscount)||0)/100
+      : (parseFloat(cartDiscount)||0);
+    const grandTotal=Math.max(0,subtotal-discount)+freight;
     const desc=validItems.map(i=>`${i.product_name}(${i.quantity})`).join(", ");
 
     try{
@@ -820,6 +607,7 @@ export default function App(){
         total_price:i.unit_price*i.quantity,
         notes:cartNotes||null,
         payment_method:cartPayment,
+        discount:discount>0?discount:null,
         added_by:cu.display_name,
         date:today(),
         // batch_id para agrupar itens da mesma venda
@@ -940,7 +728,42 @@ export default function App(){
       cartReset();
     }catch(ex){toast$("Erro de conexão: "+ex.message,"#f56565");}
   };
-  const updateSale=async()=>{
+
+  // ── RECEBÍVEIS ──
+  const loadReceivables=async()=>{
+    const{data}=await supabase.from("receivables").select("*").order("due_date",{ascending:true});
+    if(data)setReceivables(data);
+  };
+  const addReceivable=async(rec)=>{
+    await supabase.from("receivables").insert([{id:uid(),...rec,added_by:cu.display_name,created_at:nowISO()}]);
+    loadReceivables();toast$("Conta a receber registrada!");
+  };
+  const payReceivable=async(id)=>{
+    await supabase.from("receivables").update({paid:true,paid_date:today()}).eq("id",id);
+    // lança entrada no caixa
+    const rec=receivables.find(r=>r.id===id);
+    if(rec){
+      await supabase.from("cash_transactions").insert([{id:uid(),description:`Recebimento · ${rec.description}${rec.client_name?` · ${rec.client_name}`:""}`,value:rec.value,type:"entrada",category:"Recebimento",added_by:cu.display_name,date:today()}]);
+    }
+    loadReceivables();toast$("✅ Recebimento registrado no caixa!");
+  };
+  const deleteReceivable=async(id)=>{
+    await supabase.from("receivables").delete().eq("id",id);
+    loadReceivables();toast$("Removido.","#f59e0b");
+  };
+
+  // ── MOVIMENTAÇÃO ESTOQUE ──
+  const loadStockMoves=async(productId)=>{
+    const{data}=await supabase.from("stock_movements")
+      .select("*").eq("product_id",productId)
+      .order("created_at",{ascending:false}).limit(30);
+    if(data)setStockMoves(data);
+  };
+
+  // ── COMPROVANTE ──
+  const printReceipt=(saleGroup)=>{setShowReceipt(saleGroup);};
+
+  const updateSale=async()=>{  const updateSale=async()=>{
     if(!editing)return;
     await supabase.from("sales").update({product_name:editing.product_name,client_name:editing.client_name||null,quantity:parseInt(editing.quantity)||1,unit_price:parseFloat(editing.unit_price)||0,total_price:(parseFloat(editing.unit_price)||0)*(parseInt(editing.quantity)||1),notes:editing.notes,payment_method:editing.payment_method}).eq("id",editing.id);
     toast$("Venda atualizada!");setModal(null);setEditing(null);
@@ -1045,7 +868,7 @@ export default function App(){
       toast$("Cliente cadastrado!");setModal(null);setCf(FC);
     }catch(ex){toast$("Erro de conexão.","#f56565");}
   };
-  const saveClient=async()=>{await supabase.from("clients").update({name:editing.name,email:editing.email,phone:editing.phone,notes:editing.notes}).eq("id",editing.id);toast$("Cliente atualizado!");setModal(null);setEditing(null);};
+  const saveClient=async()=>{await supabase.from("clients").update({name:editing.name,email:editing.email,phone:editing.phone,notes:editing.notes,dose:editing.dose||null,interval_days:parseInt(editing.interval_days)||7,treatment_start:editing.treatment_start||null,treatment_notes:editing.treatment_notes||null}).eq("id",editing.id);toast$("Cliente atualizado!");setModal(null);setEditing(null);};
   const delClient=async id=>{await supabase.from("clients").delete().eq("id",id);toast$("Removido.","#f59e0b");};
 
   const addSupp=async()=>{
@@ -1088,7 +911,7 @@ export default function App(){
     {id:"caixa",l:"Caixa",n:"cash"},
     {id:"clientes",l:"Clientes",n:"client"},
     {id:"produtos",l:"Produtos",n:"product"},
-    {id:"noticias",l:"Notícias",n:"info"},
+    {id:"recebiveis",l:"A Receber",n:"dollar"},
     ...(isAdmin?[{id:"usuarios",l:"Usuários",n:"users"}]:[]),
   ];
 
@@ -1174,6 +997,54 @@ export default function App(){
               {lowStk.length>0&&<p style={{fontSize:".73rem",color:"#f59e0b"}}>🟡 Baixo: {lowStk.map(p=>`${p.name}(${p.stock_qty})`).join(", ")}</p>}
             </div>
           )}
+
+          {/* Meta mensal */}
+          {(()=>{
+            const goal=parseFloat(monthGoal)||0;
+            const now=new Date();
+            const startM=new Date(now.getFullYear(),now.getMonth(),1);
+            const monthRev=cashTx.filter(t=>t.type==="entrada"&&new Date(t.created_at)>=startM).reduce((a,t)=>a+t.value,0);
+            const pct=goal>0?Math.min((monthRev/goal)*100,100):0;
+            const overdue=receivables.filter(r=>!r.paid&&r.due_date&&new Date(r.due_date)<new Date());
+            const overdueVal=overdue.reduce((a,r)=>a+r.value,0);
+            return(<>
+              <div style={{background:"var(--card)",border:"1px solid var(--bdr)",borderRadius:".75rem",padding:".9rem 1rem",marginBottom:".75rem"}}>
+                <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:".5rem"}}>
+                  <div style={{fontFamily:"'Syne',sans-serif",fontWeight:700,fontSize:".8rem",color:"var(--tx2)",display:"flex",alignItems:"center",gap:".3rem"}}>
+                    🎯 Meta Mensal
+                  </div>
+                  <div style={{display:"flex",alignItems:"center",gap:".5rem"}}>
+                    <span style={{fontSize:".75rem",color:"#10b981",fontWeight:700}}>{fmt(monthRev)}</span>
+                    <span style={{fontSize:".7rem",color:"var(--tx5)"}}>de</span>
+                    <input
+                      type="number" min="0" step="100"
+                      value={monthGoal}
+                      onChange={e=>{setMonthGoal(e.target.value);try{localStorage.setItem("cpro:goal",e.target.value)}catch{}}}
+                      placeholder="definir meta..."
+                      style={{width:110,background:"var(--inp)",border:"1px solid var(--bdr2)",borderRadius:".35rem",padding:".25rem .5rem",color:"var(--tx)",fontSize:".75rem",fontFamily:"'DM Sans',sans-serif",outline:"none"}}
+                    />
+                  </div>
+                </div>
+                <div style={{height:8,background:"var(--bdr)",borderRadius:4}}>
+                  <div style={{height:"100%",width:`${pct}%`,background:pct>=100?"linear-gradient(90deg,#10b981,#059669)":pct>=70?"linear-gradient(90deg,#f59e0b,#d97706)":"linear-gradient(90deg,#4f5ef0,#8b44f0)",borderRadius:4,transition:"width .6s"}}/>
+                </div>
+                <div style={{display:"flex",justifyContent:"space-between",marginTop:".3rem",fontSize:".65rem",color:"var(--sub)"}}>
+                  <span>{fmtPct(pct)} atingido</span>
+                  {goal>0&&<span style={{color:pct>=100?"#10b981":"var(--sub)"}}>faltam {fmt(Math.max(0,goal-monthRev))}</span>}
+                </div>
+              </div>
+              {overdue.length>0&&(
+                <div onClick={()=>setShowReceivables(true)} style={{background:"var(--card)",border:"1px solid #f5656540",borderRadius:".75rem",padding:".75rem 1rem",marginBottom:".75rem",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+                  <div style={{display:"flex",alignItems:"center",gap:".5rem",color:"#f56565"}}>
+                    <Ic n="warn" s={14}/>
+                    <span style={{fontWeight:700,fontSize:".8rem"}}>{overdue.length} conta{overdue.length>1?"s":""} vencida{overdue.length>1?"s":""}</span>
+                  </div>
+                  <span style={{fontWeight:700,color:"#f56565",fontFamily:"'Syne',sans-serif",fontSize:".88rem"}}>{fmt(overdueVal)}</span>
+                </div>
+              )}
+            </>);
+          })()}
+
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:".75rem"}}>
             <div style={{background:"var(--card)",border:"1px solid var(--bdr)",borderRadius:".75rem",padding:".9rem"}}>
               <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:".65rem"}}>
@@ -1247,6 +1118,14 @@ export default function App(){
                     <div style={{fontSize:".63rem",color:"var(--tx5)"}}>{fmt(s.unit_price)}/un</div>
                   </div>
                   {canEdit&&<div style={{display:"flex",gap:".2rem"}}>
+                    <button onClick={()=>{
+                      const batch=s.batch_id?sales.filter(x=>x.batch_id===s.batch_id):[s];
+                      setShowReceipt(batch);
+                    }} style={{background:"none",border:"none",color:"#8b44f0",padding:".2rem"}} title="Comprovante"><Ic n="pdf" s={13}/></button>
+                    {s.client_name&&<button onClick={()=>{
+                      const msg=`Olá ${s.client_name}! ✅ Sua compra de *${s.product_name}* foi registrada.%0AValor: *${fmt(s.total_price)}*%0APagamento: ${s.payment_method}%0AData: ${s.date}%0AObrigado! 🙏`;
+                      window.open(`https://wa.me/?text=${msg}`,"_blank");
+                    }} style={{background:"none",border:"none",color:"#25d366",padding:".2rem"}} title="WhatsApp"><span style={{fontSize:13}}>📱</span></button>}
                     <button onClick={()=>{setEditing({...s,quantity:String(s.quantity),unit_price:String(s.unit_price)});setModal("editSale");}} style={{background:"none",border:"none",color:"#4f5ef0",padding:".2rem"}} title="Editar"><Ic n="edit" s={13}/></button>
                     {isAdmin&&<button onClick={()=>deleteSale(s.id)} style={{background:"none",border:"none",color:"var(--tx6)",padding:".2rem"}} title="Excluir"><Ic n="trash" s={13}/></button>}
                   </div>}
@@ -1272,6 +1151,17 @@ export default function App(){
             <KCard label="Valor estoque" value={fmt(stockVal)} color="#f59e0b"/>
             {zeroStk.length>0&&<KCard label="Zerados" value={zeroStk.length} color="#f56565"/>}
           </div>
+          {/* Alerta vencimentos */}
+          {(()=>{
+            const soon=products.filter(p=>{const d=daysUntil(p.expiry);return d!==null&&d<=30;}).sort((a,b)=>daysUntil(a.expiry)-daysUntil(b.expiry));
+            if(!soon.length)return null;
+            return <div style={{background:"var(--card)",border:"1px solid #f59e0b40",borderRadius:".65rem",padding:".75rem 1rem",marginBottom:".65rem"}}>
+              <div style={{fontWeight:700,fontSize:".78rem",color:"#f59e0b",marginBottom:".4rem",display:"flex",alignItems:"center",gap:".35rem"}}><Ic n="warn" s={13}/>⏰ Vencimentos nos próximos 30 dias</div>
+              <div style={{display:"flex",gap:".45rem",flexWrap:"wrap"}}>
+                {soon.map(p=>{const d=daysUntil(p.expiry);return <span key={p.id} style={{fontSize:".7rem",color:d<0?"#f56565":d<=7?"#f59e0b":"var(--tx3)",background:d<0?"#f5656515":"#f59e0b15",borderRadius:"99px",padding:".15rem .55rem",border:`1px solid ${d<0?"#f5656530":"#f59e0b30"}`}}>{p.name} · {d<0?"Vencido":d===0?"Hoje":d+"d"}</span>;})}
+              </div>
+            </div>;
+          })()}
           <div style={{display:"flex",gap:".35rem",marginBottom:".65rem",overflowX:"auto"}}>
             {cats.map(c=><button key={c} onClick={()=>setFcat(c)} style={{padding:".28rem .65rem",borderRadius:"99px",border:`1px solid ${fcat===c?"#4f5ef0":"var(--bdr2)"}`,background:fcat===c?"#4f5ef020":"transparent",color:fcat===c?"#4f5ef0":"var(--navoff)",fontSize:".7rem",fontFamily:"'DM Sans',sans-serif",fontWeight:600,whiteSpace:"nowrap"}}>{c==="all"?"Todos":`${CATS[c]||"📋"} ${c}`}</button>)}
           </div>
@@ -1292,7 +1182,7 @@ export default function App(){
                     </div>
                     <div style={{display:"flex",gap:".35rem",flexShrink:0,marginLeft:".65rem"}}>
                       {canEdit&&<><button onClick={()=>{setStF({product_id:p.id,qty:"",cost_total:"",notes:""});setModal("stockEntry");}} style={{background:"#0e1e0e",border:"1px solid #10b98130",borderRadius:".4rem",padding:".28rem .5rem",color:"#10b981",display:"flex",alignItems:"center"}}><Ic n="arrup" s={11}/></button>
-                      <button onClick={()=>{setEditing({...p,cost_per_unit:String(p.cost_per_unit),price_per_unit:String(p.price_per_unit),stock_qty:String(p.stock_qty),min_stock:String(p.min_stock||5)});setModal("editProd");}} style={{background:"none",border:"none",color:"#4f5ef0",padding:".2rem"}}><Ic n="edit" s={13}/></button>
+                      <button onClick={()=>{loadStockMoves(p.id);setEditing({...p,cost_per_unit:String(p.cost_per_unit),price_per_unit:String(p.price_per_unit),stock_qty:String(p.stock_qty),min_stock:String(p.min_stock||5),showMoves:true});setModal("editProd");}} style={{background:"none",border:"none",color:"#4f5ef0",padding:".2rem"}} title="Editar / Histórico"><Ic n="edit" s={13}/></button>
                       {isAdmin&&<button onClick={()=>delProduct(p.id)} style={{background:"none",border:"none",color:"var(--tx6)",padding:".2rem"}}><Ic n="trash" s={13}/></button>}</>}
                     </div>
                   </div>
@@ -1382,6 +1272,15 @@ export default function App(){
                       <div style={{fontWeight:700,fontSize:".85rem",color:"var(--tx)"}}>{c.name}</div>
                       <div style={{fontSize:".67rem",color:"var(--tx5)"}}>{[c.phone,c.email].filter(Boolean).join(" · ")||"Sem contato"}</div>
                       {c.notes&&<div style={{fontSize:".65rem",color:"#8b44f0"}}>📝 {c.notes}</div>}
+                      {c.dose&&(()=>{
+                        const daysSince=c.treatment_start?Math.floor((new Date()-new Date(c.treatment_start))/86400000):null;
+                        const interval=parseInt(c.interval_days)||7;
+                        const nextDose=daysSince!==null?interval-((daysSince)%interval):null;
+                        return <div style={{fontSize:".64rem",color:nextDose!==null&&nextDose<=2?"#f59e0b":"#10b981",marginTop:".1rem",display:"flex",alignItems:"center",gap:".3rem"}}>
+                          💉 Dose: {c.dose} · Intervalo: {interval}d
+                          {nextDose!==null&&<span style={{fontWeight:700}}>{nextDose<=0?"🔔 Próxima dose HOJE!":nextDose<=2?`⚠️ Próxima dose em ${nextDose}d`:`Próxima em ${nextDose}d`}</span>}
+                        </div>;
+                      })()}
                     </div>
                   </div>
                   <div style={{display:"flex",alignItems:"center",gap:".6rem"}}>
@@ -1389,10 +1288,12 @@ export default function App(){
                       <div style={{fontWeight:700,color:"#10b981",fontSize:".82rem",fontFamily:"'Syne',sans-serif"}}>{fmt(cs.reduce((a,s)=>a+s.total_price,0))}</div>
                       <div style={{fontSize:".62rem",color:"var(--tx5)"}}>{cs.length} compra{cs.length!==1?"s":""}</div>
                     </div>}
-                    {canEdit&&<div style={{display:"flex",gap:".3rem"}}>
-                      <button onClick={()=>{setEditing({...c});setModal("editCliente");}} style={{background:"none",border:"none",color:"#4f5ef0",padding:".2rem"}}><Ic n="edit" s={13}/></button>
-                      {isAdmin&&<button onClick={()=>delClient(c.id)} style={{background:"none",border:"none",color:"var(--tx6)",padding:".2rem"}}><Ic n="trash" s={13}/></button>}
-                    </div>}
+                    <div style={{display:"flex",gap:".3rem"}}>
+                      <button onClick={()=>setShowClientHist(c)} style={{background:"none",border:"none",color:"#8b44f0",padding:".2rem"}} title="Histórico"><Ic n="analytics" s={13}/></button>
+                      {c.phone&&<button onClick={()=>{const msg=`Olá ${c.name}! Como está o seu tratamento? Estamos à disposição. 💉`;window.open(`https://wa.me/55${c.phone.replace(/\D/g,"")}?text=${encodeURIComponent(msg)}`,"_blank");}} style={{background:"none",border:"none",color:"#25d366",padding:".2rem"}} title="WhatsApp"><span style={{fontSize:13}}>📱</span></button>}
+                      {canEdit&&<><button onClick={()=>{setEditing({...c});setModal("editCliente");}} style={{background:"none",border:"none",color:"#4f5ef0",padding:".2rem"}}><Ic n="edit" s={13}/></button>
+                      {isAdmin&&<button onClick={()=>delClient(c.id)} style={{background:"none",border:"none",color:"var(--tx6)",padding:".2rem"}}><Ic n="trash" s={13}/></button>}</>}
+                    </div>
                   </div>
                 </div>
               );
@@ -1436,10 +1337,77 @@ export default function App(){
           </div>
         </>)}
 
-        {/* ══ NOTÍCIAS ══ */}
-        {tab==="noticias"&&<NewsScreen dark={dark}/>}
-
         {/* ══ USUÁRIOS ══ */}
+        {/* ══ A RECEBER ══ */}
+        {tab==="recebiveis"&&(()=>{
+          const pendentes=receivables.filter(r=>!r.paid);
+          const vencidos=pendentes.filter(r=>r.due_date&&new Date(r.due_date)<new Date());
+          const totalPend=pendentes.reduce((a,r)=>a+r.value,0);
+          const[recForm,setRecForm]=React.useState({client_id:"",client_name:"",description:"",value:"",due_date:"",notes:""});
+          return(<>
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:".75rem",flexWrap:"wrap",gap:".5rem"}}>
+              <h2 style={{fontFamily:"'Syne',sans-serif",fontWeight:800,fontSize:"1rem",color:"var(--tx)"}}>💰 Contas a Receber</h2>
+            </div>
+            <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:".6rem",marginBottom:".75rem"}}>
+              <KCard label="Em aberto" value={fmtN(pendentes.length)} sub={fmt(totalPend)} color="#4f5ef0"/>
+              <KCard label="Vencidas" value={fmtN(vencidos.length)} sub={fmt(vencidos.reduce((a,r)=>a+r.value,0))} color="#f56565"/>
+              <KCard label="Recebido (mês)" value={fmt(receivables.filter(r=>r.paid&&r.paid_date===today()).reduce((a,r)=>a+r.value,0))} color="#10b981"/>
+            </div>
+            {/* Form nova conta */}
+            <div style={{background:"var(--card)",border:"1px solid var(--bdr)",borderRadius:".75rem",padding:"1rem",marginBottom:".75rem"}}>
+              <div style={{fontFamily:"'Syne',sans-serif",fontWeight:700,fontSize:".8rem",color:"var(--tx2)",marginBottom:".65rem"}}>➕ Registrar nova conta a receber</div>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:".5rem",marginBottom:".5rem"}}>
+                <Field label="Cliente" t={{sub:"var(--sub)",text5:"var(--tx5)"}}>
+                  <select value={recForm.client_id} onChange={e=>{const c=clients.find(x=>x.id===e.target.value);setRecForm(f=>({...f,client_id:e.target.value,client_name:c?.name||""}));}} style={IS}>
+                    <option value="">Selecione...</option>
+                    {clients.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}
+                  </select>
+                </Field>
+                <Field label="Vencimento" t={{sub:"var(--sub)",text5:"var(--tx5)"}}>
+                  <input type="date" value={recForm.due_date} onChange={e=>setRecForm(f=>({...f,due_date:e.target.value}))} style={IS}/>
+                </Field>
+              </div>
+              <div style={{display:"grid",gridTemplateColumns:"2fr 1fr",gap:".5rem",marginBottom:".5rem"}}>
+                <Field label="Descrição" t={{sub:"var(--sub)",text5:"var(--tx5)"}}>
+                  <input value={recForm.description} onChange={e=>setRecForm(f=>({...f,description:e.target.value}))} placeholder="Ex: Venda parcelada, fiado..." style={IS}/>
+                </Field>
+                <Field label="Valor (R$)" t={{sub:"var(--sub)",text5:"var(--tx5)"}}>
+                  <input type="number" min="0" step="0.01" value={recForm.value} onChange={e=>setRecForm(f=>({...f,value:e.target.value}))} placeholder="0,00" style={IS}/>
+                </Field>
+              </div>
+              <Btn v="ok" onClick={async()=>{
+                if(!recForm.description||!recForm.value){toast$("Preencha descrição e valor.","#f56565");return;}
+                await addReceivable(recForm);
+                setRecForm({client_id:"",client_name:"",description:"",value:"",due_date:"",notes:""});
+              }}><Ic n="save" s={13}/>Registrar</Btn>
+            </div>
+            {/* Lista */}
+            <div style={{background:"var(--card)",border:"1px solid var(--bdr)",borderRadius:".75rem"}}>
+              {receivables.length===0?<p style={{color:"var(--tx5)",textAlign:"center",padding:"2.5rem 0",fontSize:".8rem"}}>Nenhuma conta registrada.</p>
+              :receivables.map(r=>{
+                const overdue=!r.paid&&r.due_date&&new Date(r.due_date)<new Date();
+                return(
+                  <div key={r.id} style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:".72rem 1rem",borderBottom:"1px solid var(--sep)",background:overdue?"#f5656506":"transparent"}}>
+                    <div style={{flex:1,minWidth:0}}>
+                      <div style={{display:"flex",alignItems:"center",gap:".4rem",marginBottom:".15rem"}}>
+                        <span style={{fontWeight:700,fontSize:".83rem",color:r.paid?"var(--tx5)":"var(--tx)",textDecoration:r.paid?"line-through":"none"}}>{r.description}</span>
+                        {r.paid&&<Badge color="#10b981" sm>✅ Recebido</Badge>}
+                        {overdue&&<Badge color="#f56565" sm>⚠️ Vencido</Badge>}
+                      </div>
+                      <div style={{fontSize:".67rem",color:"var(--tx5)"}}>{r.client_name||"Sem cliente"}{r.due_date&&` · Vcto: ${new Date(r.due_date+"T00:00:00").toLocaleDateString("pt-BR")}`}{r.paid_date&&` · Recebido: ${r.paid_date}`}</div>
+                    </div>
+                    <div style={{display:"flex",alignItems:"center",gap:".6rem",flexShrink:0,marginLeft:".75rem"}}>
+                      <span style={{fontWeight:700,fontFamily:"'Syne',sans-serif",color:r.paid?"#10b981":"#f59e0b",fontSize:".9rem"}}>{fmt(r.value)}</span>
+                      {!r.paid&&<button onClick={()=>payReceivable(r.id)} style={{background:"#10b98115",border:"1px solid #10b98130",borderRadius:".4rem",padding:".28rem .6rem",color:"#10b981",fontSize:".72rem",fontFamily:"'DM Sans',sans-serif",fontWeight:600,cursor:"pointer"}}>✅ Recebido</button>}
+                      <button onClick={()=>deleteReceivable(r.id)} style={{background:"none",border:"none",color:"var(--tx6)",padding:".2rem",cursor:"pointer"}}><Ic n="trash" s={13}/></button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </>);
+        })()}
+
         {tab==="usuarios"&&isAdmin&&(<>
           <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:".75rem"}}>
             <h2 style={{fontFamily:"'Syne',sans-serif",fontWeight:800,fontSize:"1rem",color:"var(--tx)"}}>Usuários</h2>
@@ -1640,6 +1608,30 @@ export default function App(){
           )}
         </div>
 
+        {/* ── DESCONTO ── */}
+        {cartSubtotal>0&&(
+          <div style={{background:"var(--pill)",borderRadius:".5rem",padding:".65rem .85rem",marginBottom:"1rem"}}>
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:".45rem"}}>
+              <div style={{fontSize:".68rem",color:"var(--sub)",textTransform:"uppercase",letterSpacing:".06em",fontWeight:700}}>🏷️ Desconto</div>
+              <div style={{display:"flex",gap:".25rem"}}>
+                {["fixed","percent"].map(t=>(
+                  <button key={t} onClick={()=>setCartDiscountType(t)} style={{padding:".2rem .55rem",borderRadius:".3rem",fontSize:".68rem",fontWeight:600,fontFamily:"'DM Sans',sans-serif",border:`1px solid ${cartDiscountType===t?"#4f5ef0":"var(--bdr2)"}`,background:cartDiscountType===t?"#4f5ef020":"transparent",color:cartDiscountType===t?"#4f5ef0":"var(--navoff)"}}>
+                    {t==="fixed"?"R$":"%"}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:".5rem",alignItems:"center"}}>
+              <input type="number" min="0" step="0.01" value={cartDiscount} onChange={e=>setCartDiscount(e.target.value)} placeholder={cartDiscountType==="percent"?"ex: 10 (%)":"ex: 20,00 (R$)"} style={{...IS,fontSize:".83rem"}}/>
+              <div style={{fontSize:".75rem"}}>
+                {cartDiscountVal>0
+                  ?<span style={{color:"#4f5ef0",fontWeight:600}}>- {fmt(cartDiscountVal)} no total</span>
+                  :<span style={{color:"var(--tx5)"}}>Sem desconto</span>}
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* ── CLIENTE + PAGAMENTO ── */}
         <R2>
           <Field label="Cliente" hint="opcional">
@@ -1682,6 +1674,12 @@ export default function App(){
               <div style={{display:"flex",justifyContent:"space-between",fontSize:".78rem"}}>
                 <span style={{color:"var(--tx4)"}}>📉 Custo entregador (sai do caixa)</span>
                 <span style={{color:"#f56565",fontWeight:600}}>- {fmt(cartDeliveryCostVal)}</span>
+              </div>
+            )}
+            {cartDiscountVal>0&&(
+              <div style={{display:"flex",justifyContent:"space-between",fontSize:".78rem"}}>
+                <span style={{color:"var(--tx4)"}}>🏷️ Desconto {cartDiscountType==="percent"?`(${cartDiscount}%)`:"(fixo)"}</span>
+                <span style={{color:"#4f5ef0",fontWeight:600}}>- {fmt(cartDiscountVal)}</span>
               </div>
             )}
             <div style={{borderTop:"1px solid #4f5ef030",marginTop:".4rem",paddingTop:".4rem",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
@@ -1844,10 +1842,19 @@ export default function App(){
       <Inp label="Observações" hint="ex: dosagem, periodicidade..." placeholder="Ex: Usa 2.5mg a cada 7 dias" value={cf.notes} onChange={e=>setCf(f=>({...f,notes:e.target.value}))}/>
       <div style={{display:"flex",gap:".5rem",justifyContent:"flex-end"}}><Btn v="ghost" onClick={()=>setModal(null)}>Cancelar</Btn><Btn onClick={addClient}><Ic n="save" s={13}/>Salvar</Btn></div>
     </Modal>)}
-    {modal==="editCliente"&&editing&&(<Modal title="Editar Cliente" onClose={()=>{setModal(null);setEditing(null);}} icon="edit">
+    {modal==="editCliente"&&editing&&(<Modal title="Editar Cliente" onClose={()=>{setModal(null);setEditing(null);}} icon="edit" wide>
       <Inp label="Nome *" value={editing.name} onChange={e=>setEditing(v=>({...v,name:e.target.value}))}/>
       <R2><Inp label="Telefone" type="tel" value={editing.phone||""} onChange={e=>setEditing(v=>({...v,phone:e.target.value}))}/><Inp label="E-mail" type="email" value={editing.email||""} onChange={e=>setEditing(v=>({...v,email:e.target.value}))}/></R2>
       <Inp label="Observações" value={editing.notes||""} onChange={e=>setEditing(v=>({...v,notes:e.target.value}))}/>
+      <div style={{borderTop:"1px solid var(--bdr)",paddingTop:".85rem",marginTop:".25rem"}}>
+        <div style={{fontWeight:700,fontSize:".78rem",color:"#4f5ef0",marginBottom:".65rem",display:"flex",gap:".35rem",alignItems:"center"}}><Ic n="syringe" s={13}/>💉 Protocolo de Tratamento (opcional)</div>
+        <R2>
+          <Inp label="Dose atual" placeholder="Ex: 2.5mg, 5mg, 7.5mg..." value={editing.dose||""} onChange={e=>setEditing(v=>({...v,dose:e.target.value}))}/>
+          <Inp label="Intervalo (dias)" type="number" min="1" placeholder="7" value={editing.interval_days||""} onChange={e=>setEditing(v=>({...v,interval_days:e.target.value}))}/>
+        </R2>
+        <Inp label="Data início tratamento" type="date" value={editing.treatment_start||""} onChange={e=>setEditing(v=>({...v,treatment_start:e.target.value}))}/>
+        <Inp label="Notas do tratamento" placeholder="Ex: Responde bem à dose 5mg, próxima revisão em..." value={editing.treatment_notes||""} onChange={e=>setEditing(v=>({...v,treatment_notes:e.target.value}))}/>
+      </div>
       <div style={{display:"flex",gap:".5rem",justifyContent:"space-between"}}>
         {isAdmin&&<Btn v="del" sm onClick={()=>{delClient(editing.id);setModal(null);setEditing(null);}}><Ic n="trash" s={12}/>Excluir</Btn>}
         <div style={{display:"flex",gap:".5rem",marginLeft:"auto"}}><Btn v="ghost" onClick={()=>{setModal(null);setEditing(null);}}>Cancelar</Btn><Btn onClick={saveClient}><Ic n="save" s={13}/>Salvar</Btn></div>
@@ -1881,6 +1888,133 @@ export default function App(){
         <div style={{display:"flex",gap:".5rem"}}><Btn v="ghost" onClick={()=>{setModal(null);setEditing(null);}}>Cancelar</Btn><Btn onClick={saveUser}><Ic n="save" s={13}/>Salvar</Btn></div>
       </div>
     </Modal>)}
+
+
+    {/* ═══ COMPROVANTE ═══ */}
+    {showReceipt&&(
+      <Modal title="Comprovante de Venda" onClose={()=>setShowReceipt(null)} icon="pdf" wide>
+        <div id="receipt-content" style={{fontFamily:"'DM Sans',sans-serif"}}>
+          <div style={{textAlign:"center",marginBottom:"1.25rem",paddingBottom:"1rem",borderBottom:"1px solid var(--bdr)"}}>
+            <div style={{fontSize:"1.2rem",fontWeight:800,fontFamily:"'Syne',sans-serif",color:"var(--tx)"}}>CaixaPro · Tirzepatida</div>
+            <div style={{fontSize:".75rem",color:"var(--tx5)",marginTop:".2rem"}}>Comprovante de Venda</div>
+            <div style={{fontSize:".72rem",color:"var(--sub)",marginTop:".1rem"}}>{showReceipt[0]?.date}</div>
+          </div>
+          {showReceipt[0]?.client_name&&<div style={{marginBottom:"1rem",padding:".65rem .85rem",background:"var(--pill)",borderRadius:".5rem"}}>
+            <div style={{fontSize:".65rem",color:"var(--sub)",textTransform:"uppercase",marginBottom:".15rem"}}>Cliente</div>
+            <div style={{fontWeight:700,color:"var(--tx)",fontSize:".88rem"}}>{showReceipt[0].client_name}</div>
+          </div>}
+          <table style={{width:"100%",borderCollapse:"collapse",marginBottom:"1rem"}}>
+            <thead><tr style={{borderBottom:"1px solid var(--bdr)"}}>
+              {["Produto","Qtd","Preço unit.","Total"].map(h=><th key={h} style={{textAlign:"left",padding:".4rem .3rem",fontSize:".68rem",color:"var(--sub)",textTransform:"uppercase",fontWeight:600}}>{h}</th>)}
+            </tr></thead>
+            <tbody>
+              {showReceipt.map((s,i)=><tr key={i} style={{borderBottom:"1px solid var(--sep)"}}>
+                <td style={{padding:".5rem .3rem",fontSize:".82rem",color:"var(--tx)"}}>{s.product_name}{s.unit_price===0&&" 🎁"}</td>
+                <td style={{padding:".5rem .3rem",fontSize:".82rem",color:"var(--tx3)"}}>{s.quantity}</td>
+                <td style={{padding:".5rem .3rem",fontSize:".82rem",color:"var(--tx3)"}}>{s.unit_price===0?"Cortesia":fmt(s.unit_price)}</td>
+                <td style={{padding:".5rem .3rem",fontSize:".82rem",fontWeight:700,color:"#10b981"}}>{s.unit_price===0?"R$ 0,00":fmt(s.total_price)}</td>
+              </tr>)}
+            </tbody>
+          </table>
+          <div style={{display:"flex",flexDirection:"column",gap:".3rem",padding:"1rem",background:"var(--pill)",borderRadius:".5rem",marginBottom:"1rem"}}>
+            <div style={{display:"flex",justifyContent:"space-between",fontSize:".82rem"}}>
+              <span style={{color:"var(--tx4)"}}>Subtotal</span>
+              <span style={{color:"var(--tx3)",fontWeight:600}}>{fmt(showReceipt.reduce((a,s)=>a+s.total_price,0))}</span>
+            </div>
+            <div style={{display:"flex",justifyContent:"space-between",borderTop:"1px solid var(--bdr)",paddingTop:".3rem"}}>
+              <span style={{fontWeight:700,color:"var(--tx)",fontFamily:"'Syne',sans-serif"}}>TOTAL</span>
+              <span style={{fontWeight:800,fontSize:"1.1rem",color:"#10b981",fontFamily:"'Syne',sans-serif"}}>{fmt(showReceipt.reduce((a,s)=>a+s.total_price,0))}</span>
+            </div>
+            {showReceipt[0]?.payment_method&&<div style={{fontSize:".73rem",color:"var(--sub)",textAlign:"right"}}>Pagamento: {showReceipt[0].payment_method}</div>}
+          </div>
+          <div style={{textAlign:"center",fontSize:".68rem",color:"var(--tx6)"}}>Obrigado pela compra! · CaixaPro</div>
+        </div>
+        <div style={{display:"flex",gap:".5rem",justifyContent:"flex-end",marginTop:"1rem",paddingTop:"1rem",borderTop:"1px solid var(--bdr)"}}>
+          <Btn v="ghost" onClick={()=>setShowReceipt(null)}>Fechar</Btn>
+          <Btn onClick={()=>window.print()}><Ic n="pdf" s={13}/>Imprimir</Btn>
+        </div>
+      </Modal>
+    )}
+
+    {/* ═══ HISTÓRICO CLIENTE ═══ */}
+    {showClientHist&&(
+      <Modal title={`Histórico · ${showClientHist.name}`} onClose={()=>setShowClientHist(null)} icon="analytics" wide>
+        {(()=>{
+          const cs=sales.filter(s=>s.client_id===showClientHist.id||s.client_name===showClientHist.name);
+          const total=cs.reduce((a,s)=>a+s.total_price,0);
+          const prods={};cs.forEach(s=>{prods[s.product_name]=(prods[s.product_name]||0)+s.quantity;});
+          const lastBuy=cs[0]?.date||null;
+          const daysSince=lastBuy?Math.floor((new Date()-new Date(cs[0].created_at))/86400000):null;
+          return(<>
+            <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:".6rem",marginBottom:"1rem"}}>
+              <KCard label="Total gasto" value={fmt(total)} color="#10b981"/>
+              <KCard label="Compras" value={cs.length} color="#4f5ef0"/>
+              <KCard label="Última compra" value={lastBuy||"—"} sub={daysSince!==null?`${daysSince}d atrás`:""} color={daysSince!==null&&daysSince>30?"#f59e0b":"#10b981"}/>
+            </div>
+            {showClientHist.dose&&<div style={{background:"linear-gradient(135deg,#4f5ef015,#10b98115)",border:"1px solid #4f5ef030",borderRadius:".65rem",padding:".85rem",marginBottom:"1rem"}}>
+              <div style={{fontWeight:700,fontSize:".8rem",color:"#4f5ef0",marginBottom:".5rem"}}>💉 Protocolo de Tratamento</div>
+              <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:".5rem"}}>
+                {[{l:"Dose atual",v:showClientHist.dose,c:"#4f5ef0"},{l:"Intervalo",v:`${showClientHist.interval_days||7} dias`,c:"#8b44f0"},{l:"Início",v:showClientHist.treatment_start?new Date(showClientHist.treatment_start+"T00:00:00").toLocaleDateString("pt-BR"):"—",c:"#10b981"}].map(m=>(
+                  <div key={m.l} style={{textAlign:"center"}}>
+                    <div style={{fontSize:".6rem",color:"var(--sub)",textTransform:"uppercase",marginBottom:".15rem"}}>{m.l}</div>
+                    <div style={{fontWeight:700,fontSize:".88rem",color:m.c,fontFamily:"'Syne',sans-serif"}}>{m.v}</div>
+                  </div>
+                ))}
+              </div>
+              {showClientHist.treatment_notes&&<div style={{fontSize:".73rem",color:"var(--tx4)",marginTop:".5rem"}}>📝 {showClientHist.treatment_notes}</div>}
+            </div>}
+            {Object.keys(prods).length>0&&<div style={{background:"var(--pill)",borderRadius:".6rem",padding:".75rem",marginBottom:"1rem"}}>
+              <div style={{fontWeight:700,fontSize:".78rem",color:"var(--tx2)",marginBottom:".5rem"}}>📦 Produtos mais comprados</div>
+              {Object.entries(prods).sort((a,b)=>b[1]-a[1]).map(([n,q])=><div key={n} style={{display:"flex",justifyContent:"space-between",padding:".3rem 0",borderBottom:"1px solid var(--sep)",fontSize:".78rem"}}><span style={{color:"var(--tx)"}}>{n}</span><span style={{color:"#4f5ef0",fontWeight:700}}>{q} un</span></div>)}
+            </div>}
+            <div style={{fontFamily:"'Syne',sans-serif",fontWeight:700,fontSize:".8rem",color:"var(--tx2)",marginBottom:".5rem"}}>🛒 Últimas compras</div>
+            <div style={{background:"var(--card)",border:"1px solid var(--bdr)",borderRadius:".65rem"}}>
+              {cs.length===0?<p style={{color:"var(--tx5)",textAlign:"center",padding:"1.5rem",fontSize:".8rem"}}>Nenhuma compra.</p>
+              :cs.map(s=>(
+                <div key={s.id} style={{display:"flex",justifyContent:"space-between",padding:".6rem 1rem",borderBottom:"1px solid var(--sep)"}}>
+                  <div><div style={{fontSize:".82rem",color:"var(--tx)",fontWeight:600}}>{s.product_name}</div><div style={{fontSize:".65rem",color:"var(--tx5)"}}>{s.date} · {s.quantity}un · {s.payment_method}</div></div>
+                  <span style={{fontWeight:700,color:"#10b981",fontFamily:"'Syne',sans-serif",fontSize:".85rem"}}>{fmt(s.total_price)}</span>
+                </div>
+              ))}
+            </div>
+          </>);
+        })()}
+      </Modal>
+    )}
+
+    {/* ═══ CALCULADORA IMPORTAÇÃO ═══ */}
+    {showImportCalc&&(
+      <Modal title="🧮 Calculadora de Custo de Importação" onClose={()=>setShowImportCalc(false)}>
+        <div style={{background:"var(--infobox)",borderRadius:".45rem",padding:".55rem .8rem",marginBottom:".85rem",fontSize:".73rem",color:"#4f5ef0",display:"flex",gap:".3rem",alignItems:"center"}}><Ic n="info" s={12}/>Calcule o custo real por unidade considerando frete e taxas</div>
+        <Inp label="Custo total da remessa (R$) *" type="number" min="0" step="0.01" placeholder="Ex: 3500,00" value={importCalc.totalCost} onChange={e=>setImportCalc(v=>({...v,totalCost:e.target.value}))}/>
+        <Inp label="Quantidade de unidades *" type="number" min="1" placeholder="Ex: 20 ampolas" value={importCalc.qty} onChange={e=>setImportCalc(v=>({...v,qty:e.target.value}))}/>
+        <Inp label="Extras (frete, taxas, câmbio) R$" hint="opcional" type="number" min="0" step="0.01" placeholder="Ex: 250,00" value={importCalc.extras} onChange={e=>setImportCalc(v=>({...v,extras:e.target.value}))}/>
+        {importCalc.totalCost&&importCalc.qty&&(()=>{
+          const total=(parseFloat(importCalc.totalCost)||0)+(parseFloat(importCalc.extras)||0);
+          const qty=parseInt(importCalc.qty)||1;
+          const custo=total/qty;
+          const sugeridoMark2=(custo*2).toFixed(2);
+          const sugeridoMark3=(custo*3).toFixed(2);
+          return <div style={{background:"linear-gradient(135deg,#4f5ef015,#10b98115)",border:"1px solid #4f5ef030",borderRadius:".6rem",padding:"1rem",marginTop:".5rem"}}>
+            <div style={{fontWeight:700,fontSize:".82rem",color:"#4f5ef0",marginBottom:".65rem",fontFamily:"'Syne',sans-serif"}}>📊 Resultado</div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:".5rem",textAlign:"center"}}>
+              {[{l:"Custo/unidade",v:fmt(custo),c:"#f56565"},{l:"Preço c/ 100% markup",v:fmt(custo*2),c:"#f59e0b"},{l:"Preço c/ 200% markup",v:fmt(custo*3),c:"#10b981"}].map(m=>(
+                <div key={m.l} style={{background:"var(--pill)",borderRadius:".5rem",padding:".6rem .5rem"}}>
+                  <div style={{fontSize:".58rem",color:"var(--sub)",textTransform:"uppercase",marginBottom:".15rem"}}>{m.l}</div>
+                  <div style={{fontWeight:800,fontSize:".95rem",color:m.c,fontFamily:"'Syne',sans-serif"}}>{m.v}</div>
+                </div>
+              ))}
+            </div>
+            <div style={{fontSize:".7rem",color:"var(--tx5)",marginTop:".65rem",textAlign:"center"}}>
+              Total remessa: {fmt(total)} · {qty} unidades
+            </div>
+          </div>;
+        })()}
+        <div style={{display:"flex",justifyContent:"flex-end",marginTop:"1rem"}}>
+          <Btn v="ghost" onClick={()=>{setShowImportCalc(false);setImportCalc({totalCost:"",qty:"",extras:""});}}>Fechar</Btn>
+        </div>
+      </Modal>
+    )}
 
     {/* Logout */}
     {logoutC&&(
