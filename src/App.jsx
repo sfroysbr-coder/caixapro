@@ -16,7 +16,22 @@ const stkColor=q=>q<=0?"#f56565":q<=5?"#f59e0b":"#10b981";
 
 const ROLES={admin:"Admin",operator:"Operador",viewer:"Visualizador"};
 const CATS={tirzepatida:"💉",material:"🧊",embalagem:"📦",seringa:"🩺",outro:"📋"};
-const PAYS=["Dinheiro","PIX","Cartão Crédito","Cartão Débito","Transferência"];
+const PAYS_SIMPLES=["Dinheiro","PIX","Transferência"];
+const CARD_BRANDS=["Visa","Mastercard","Elo","Hipercard","AmEx"];
+const CARD_MODES=[
+  {key:"debito",    label:"Débito"},
+  {key:"vista",     label:"Crédito à Vista"},
+  {key:"parc2a6",   label:"Parcelado 2-6x"},
+  {key:"parc7a12",  label:"Parcelado 7-12x"},
+];
+const DEFAULT_TAXES={
+  Visa:      {debito:1.99,vista:2.99,parc2a6:3.49,parc7a12:3.99},
+  Mastercard:{debito:1.89,vista:2.89,parc2a6:3.39,parc7a12:3.89},
+  Elo:       {debito:2.09,vista:3.09,parc2a6:3.59,parc7a12:4.09},
+  Hipercard: {debito:2.19,vista:3.19,parc2a6:3.69,parc7a12:4.19},
+  AmEx:      {debito:2.49,vista:3.49,parc2a6:3.99,parc7a12:4.49},
+};
+const PAYS=["Dinheiro","PIX","Transferência","Débito","Crédito à Vista","Crédito Parcelado"];
 
 // Tema
 const getTheme=()=>{try{return localStorage.getItem("cpro:theme")!=="light"}catch{return true}};
@@ -451,7 +466,7 @@ export default function App(){
   const[showA,setShowA]=useState(false);
   const[toast,setToast]=useState(null);
   const[pwv,setPwv]=useState({});
-  const[monthGoal,setMonthGoal]=useState(()=>{try{return localStorage.getItem("cpro:goal")||""}catch{return ""}});
+  const[monthGoal,setMonthGoal]=useState("");
   const[showReceipt,setShowReceipt]=useState(null);
   const[showClientHist,setShowClientHist]=useState(null);
   const[showImportCalc,setShowImportCalc]=useState(false);
@@ -459,6 +474,15 @@ export default function App(){
   const[receivables,setReceivables]=useState([]);
   const[recForm,setRecForm]=useState({client_id:"",client_name:"",description:"",value:"",due_date:""});
   const[cartDiscount,setCartDiscount]=useState("");
+  const[cartParcelas,setCartParcelas]=useState(2);
+  const[cartCardBrand,setCartCardBrand]=useState("Visa");
+  const[cardTaxes,setCardTaxes]=useState(DEFAULT_TAXES);
+  const[showCardConfig,setShowCardConfig]=useState(false);
+  const[showGoals,setShowGoals]=useState(false);
+  const[monthlyGoals,setMonthlyGoals]=useState({});
+  const[goalYear,setGoalYear]=useState(new Date().getFullYear());
+  const[localTaxes,setLocalTaxes]=useState(()=>JSON.parse(JSON.stringify(DEFAULT_TAXES)));
+  const updateLocalTax=(brand,mode,val)=>setLocalTaxes(t=>({...t,[brand]:{...t[brand],[mode]:val}}));
   const[cartDiscountType,setCartDiscountType]=useState("fixed");
 
   const toast$=(msg,color="#10b981")=>{setToast({msg,color});setTimeout(()=>setToast(null),3500);};
@@ -507,6 +531,19 @@ export default function App(){
       if(d.data)setClients(d.data);if(e.data)setSupp(e.data);if(f.data)setUsers(f.data);
       const{data:rv}=await supabase.from("receivables").select("*").order("due_date",{ascending:true});
       if(rv)setReceivables(rv);
+      // Carregar configurações do sistema (taxas cartão + metas)
+      const{data:settings}=await supabase.from("app_settings").select("*");
+      if(settings&&settings.length>0){
+        const taxRow=settings.find(s=>s.key==="cardtaxes");
+        if(taxRow){try{setCardTaxes(JSON.parse(taxRow.value));}catch{}}
+        const goals={};
+        settings.filter(s=>s.key.startsWith("goal_")).forEach(s=>{
+          goals[s.key.replace("goal_","")]=parseFloat(s.value)||0;
+        });
+        if(Object.keys(goals).length>0)setMonthlyGoals(goals);
+        const mgRow=settings.find(s=>s.key==="monthgoal");
+        if(mgRow)setMonthGoal(mgRow.value||"");
+      }
       setLastSync(new Date().toLocaleTimeString("pt-BR"));
     }catch(e){console.error(e);}
     setSyncing(false);
@@ -514,7 +551,7 @@ export default function App(){
 
   useEffect(()=>{
     if(!cu)return;load();
-    const tbls=["products","sales","cash_transactions","clients","suppliers","app_users"];
+    const tbls=["products","sales","cash_transactions","clients","suppliers","app_users","receivables","app_settings"];
     const subs=tbls.map((t,i)=>supabase.channel(`ch${i}`).on("postgres_changes",{event:"*",schema:"public",table:t},load).subscribe());
     return()=>subs.forEach(s=>s.unsubscribe());
   },[cu,load]);
@@ -554,7 +591,7 @@ export default function App(){
   };
   const cartAddLine=()=>setCartItems(items=>[...items,newCartItem()]);
   const cartRemoveLine=key=>setCartItems(items=>items.length>1?items.filter(i=>i.key!==key):items);
-  const cartReset=()=>{setCartItems([newCartItem()]);setCartClient({id:"",name:""});setCartPayment("PIX");setCartNotes("");setCartFreight("");setCartDelivery(false);setCartDeliveryCost("");setCartDiscount("");setCartDiscountType("fixed");};
+  const cartReset=()=>{setCartItems([newCartItem()]);setCartClient({id:"",name:""});setCartPayment("PIX");setCartNotes("");setCartFreight("");setCartDelivery(false);setCartDeliveryCost("");setCartDiscount("");setCartDiscountType("fixed");setCartParcelas(2);setCartCardBrand("Visa");};
 
   const cartSubtotal=cartItems.reduce((a,i)=>a+i.unit_price*i.quantity,0);
   const cartFreightVal=parseFloat(cartFreight)||0;
@@ -621,26 +658,74 @@ export default function App(){
       // 3. Montar lançamentos de caixa
       const cashInserts=[];
 
-      // Separar itens pagos (preço > 0) e cortesia (preço = 0)
+      // Separar itens pagos e cortesia
       const paidItems=validItems.filter(i=>i.unit_price>0);
       const freeItems=validItems.filter(i=>i.unit_price===0);
 
-      // 3a. Entrada de receita para itens com preço
-      if(grandTotal>0){
-        cashInserts.push({
-          id:uid(),
-          description:`Venda${clientName?` · ${clientName}`:""}${freight>0?" (c/ frete)":""} · ${desc}`,
-          value:grandTotal,
-          type:"entrada",
-          category:"Venda",
-          sale_id:batchId,
-          product_name:validItems.map(i=>i.product_name).join(", "),
-          added_by:cu.display_name,
-          date:today(),
-        });
+      // Calcular taxa de cartão
+      const isCard=["Débito","Crédito à Vista","Crédito Parcelado"].includes(cartPayment);
+      const cardMode=cartPayment==="Débito"?"debito":cartPayment==="Crédito à Vista"?"vista":cartParcelas<=6?"parc2a6":"parc7a12";
+      const taxRate=isCard?getCardTaxRate(cartCardBrand,cardMode):0;
+      const taxAmount=grandTotal*(taxRate/100);
+      const netTotal=grandTotal-taxAmount;
+      const payLabel=isCard?(cartPayment==="Crédito Parcelado"?cartPayment+" "+cartParcelas+"x · "+cartCardBrand:cartPayment+" · "+cartCardBrand):cartPayment;
+
+      // 3a. Para parcelado: NÃO lança no caixa agora (será lançado ao marcar parcelas pagas)
+      //     Para débito/crédito à vista: lança entrada líquida + saída da taxa
+      if(cartPayment==="Crédito Parcelado"&&grandTotal>0){
+        // Cria recebíveis com valor líquido por parcela
+        const nParcelas=parseInt(cartParcelas)||2;
+        const parcelaNet=Math.round((netTotal/nParcelas)*100)/100;
+        const recInserts=[];
+        for(let p=0;p<nParcelas;p++){
+          const dueDate=new Date();
+          dueDate.setMonth(dueDate.getMonth()+p+1);
+          recInserts.push({
+            id:uid(),
+            client_id:clientId,
+            client_name:clientName,
+            description:"Parcela "+(p+1)+"/"+nParcelas+" · "+cartCardBrand+" · "+desc,
+            value:parcelaNet,
+            due_date:dueDate.toISOString().slice(0,10),
+            paid:false,
+            added_by:cu.display_name,
+            created_at:nowISO(),
+          });
+        }
+        await supabase.from("receivables").insert(recInserts);
+        await loadReceivables();
+      } else if(grandTotal>0){
+        // Débito/Crédito à vista ou outros: lança no caixa
+        if(netTotal>0){
+          cashInserts.push({
+            id:uid(),
+            description:"Venda"+(clientName?" · "+clientName:"")+(freight>0?" (c/ frete)":"")+" · "+desc+" · "+payLabel,
+            value:netTotal,
+            type:"entrada",
+            category:"Venda",
+            sale_id:batchId,
+            product_name:validItems.map(i=>i.product_name).join(", "),
+            added_by:cu.display_name,
+            date:today(),
+          });
+        }
+        // Lança taxa do cartão como saída
+        if(isCard&&taxAmount>0){
+          cashInserts.push({
+            id:uid(),
+            description:"Taxa "+payLabel+(clientName?" · "+clientName:""),
+            value:taxAmount,
+            type:"saida",
+            category:"Taxa Cartão",
+            sale_id:batchId,
+            product_name:null,
+            added_by:cu.display_name,
+            date:today(),
+          });
+        }
       }
 
-      // 3b. Saída de custo para itens CORTESIA (preço = 0)
+// 3b. Saída de custo para itens CORTESIA (preço = 0)
       // Representa o custo do produto doado/dado sem custo ao cliente
       for(const item of freeItems){
         const prod=products.find(p=>p.id===item.product_id);
@@ -710,17 +795,61 @@ export default function App(){
 
       const freeCount=freeItems.length;
       const paidCount=paidItems.length;
-      const deliveryInfo=cartDelivery&&cartDeliveryCostVal>0?` · 🛵 Entregador: ${fmt(cartDeliveryCostVal)}`:"";
-      const msg=freeCount>0
-        ?`✅ Venda registrada! ${paidCount} pago(s) · ${freeCount} cortesia · Total: ${fmt(grandTotal)}${deliveryInfo}`
-        :`✅ Venda registrada! ${validItems.length} produto(s) · Total: ${fmt(grandTotal)}${deliveryInfo}`;
-      toast$(msg);
+      const deliveryInfo=cartDelivery&&cartDeliveryCostVal>0?" · 🛵 Entregador: "+fmt(cartDeliveryCostVal):"";
+
+      if(cartPayment!=="Crédito Parcelado"){
+        const msg=freeCount>0
+          ?"✅ Venda registrada! "+paidCount+" pago(s) · "+freeCount+" cortesia · Total: "+fmt(grandTotal)+deliveryInfo
+          :"✅ Venda registrada! "+validItems.length+" produto(s) · Total: "+fmt(grandTotal)+deliveryInfo;
+        toast$(msg);
+      } else {
+        const nParcelas=parseInt(cartParcelas)||2;
+        toast$("✅ "+cartCardBrand+" "+nParcelas+"x · "+nParcelas+" parcelas de "+fmt(cartInstallmentNet)+" (líq.) em A Receber!");
+      }
       setModal(null);
       cartReset();
     }catch(ex){toast$("Erro de conexão: "+ex.message,"#f56565");}
   };
 
   // ── RECEBÍVEIS ──────────────────────────────────────────────────
+  // ── CARD TAX HELPERS ────────────────────────────────────────────
+  const getCardTaxRate=(brand,mode)=>{
+    const t=cardTaxes[brand]||DEFAULT_TAXES[brand]||{};
+    return parseFloat(t[mode])||0;
+  };
+  const saveCardTaxes=async(newTaxes)=>{
+    setCardTaxes(newTaxes);
+    try{
+      await supabase.from("app_settings").upsert({
+        key:"cardtaxes",
+        value:JSON.stringify(newTaxes),
+        updated_at:nowISO(),
+        updated_by:cu.display_name
+      },{onConflict:"key"});
+      toast$("✅ Taxas de cartão salvas na nuvem!");
+    }catch(e){toast$("Erro ao salvar taxas: "+e.message,"#f56565");}
+  };
+  const saveMonthlyGoal=async(yearMonth,value)=>{
+    const numVal=parseFloat(value)||0;
+    setMonthlyGoals(prev=>({...prev,[yearMonth]:numVal}));
+    try{
+      await supabase.from("app_settings").upsert({
+        key:"goal_"+yearMonth,
+        value:String(numVal),
+        updated_at:nowISO(),
+        updated_by:cu.display_name
+      },{onConflict:"key"});
+    }catch(e){console.error("Erro ao salvar meta:",e);}
+  };
+
+  // Computed — current cart card tax
+  const cartIsCard=["Débito","Crédito à Vista","Crédito Parcelado"].includes(cartPayment);
+  const cartCardMode=cartPayment==="Débito"?"debito":cartPayment==="Crédito à Vista"?"vista":cartParcelas<=6?"parc2a6":"parc7a12";
+  const cartTaxRate=cartIsCard?getCardTaxRate(cartCardBrand,cartCardMode):0;
+  const cartTaxAmount=cartTotal*(cartTaxRate/100);
+  const cartNetTotal=cartTotal-cartTaxAmount;
+  const cartInstallmentNet=cartPayment==="Crédito Parcelado"&&cartParcelas>0?cartNetTotal/cartParcelas:0;
+
   const loadReceivables=async()=>{
     const{data}=await supabase.from("receivables").select("*").order("due_date",{ascending:true});
     if(data)setReceivables(data);
@@ -960,7 +1089,8 @@ export default function App(){
 
         {/* ══ DASHBOARD ══ */}
         {tab==="dashboard"&&(<>
-          <div style={{display:"flex",justifyContent:"flex-end",marginBottom:".75rem"}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:".75rem",flexWrap:"wrap",gap:".5rem"}}>
+            <Btn sm v="ghost" onClick={()=>setShowGoals(true)}>📅 Metas & Histórico</Btn>
             <Btn v="info" onClick={()=>setShowA(true)}><Ic n="analytics" s={14}/> Relatório Gerencial</Btn>
           </div>
           <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:".6rem",marginBottom:".7rem"}}>
@@ -969,7 +1099,7 @@ export default function App(){
             <KCard label="Lucro" value={fmt(net)} sub={fmtPct(margin)+" margem"} color={net>=0?"#4f5ef0":"#f56565"}/>
           </div>
           <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:".6rem",marginBottom:".7rem"}}>
-            <KCard label="Vendas" value={fmtN(sales.length)} sub={`${fmtN(totalUnits)} un`} color="#8b44f0" icon="sales"/>
+            <KCard label="Vendas" value={fmtN(sales.length)} sub={fmtN(totalUnits)+" un"} color="#8b44f0" icon="sales"/>
             <KCard label="Estoque" value={products.length} sub={zeroStk.length>0?`${zeroStk.length} zerado(s)`:lowStk.length>0?`${lowStk.length} baixo(s)`:"ok"} color={zeroStk.length>0?"#f56565":lowStk.length>0?"#f59e0b":"#10b981"} icon="stock"/>
             <KCard label="Markup empresa" value={fmtPct(mrkp)} sub="lucro/custo" color="#f59e0b"/>
           </div>
@@ -980,6 +1110,28 @@ export default function App(){
               {lowStk.length>0&&<p style={{fontSize:".73rem",color:"#f59e0b"}}>🟡 Baixo: {lowStk.map(p=>`${p.name}(${p.stock_qty})`).join(", ")}</p>}
             </div>
           )}
+          {/* A Receber resumo */}
+          {(()=>{
+            const pend=receivables.filter(r=>!r.paid);
+            const pendVal=pend.reduce((a,r)=>a+r.value,0);
+            const overdue=pend.filter(r=>r.due_date&&new Date(r.due_date)<new Date());
+            if(pend.length===0)return null;
+            return(
+              <div style={{background:"var(--card)",border:"1px solid #4f5ef030",borderRadius:".75rem",padding:".75rem 1rem",marginBottom:".75rem",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"space-between"}} onClick={()=>setTab("recebiveis")}>
+                <div>
+                  <div style={{fontWeight:700,fontSize:".8rem",color:"var(--tx)",display:"flex",alignItems:"center",gap:".35rem"}}>
+                    <Ic n="dollar" s={13}/>💰 A Receber
+                  </div>
+                  <div style={{fontSize:".67rem",color:"var(--tx5)",marginTop:".12rem"}}>{pend.length} conta{pend.length>1?"s":""} em aberto{overdue.length>0?" · "+overdue.length+" vencida"+(overdue.length>1?"s":""):""}</div>
+                </div>
+                <div style={{textAlign:"right"}}>
+                  <div style={{fontWeight:800,color:"#4f5ef0",fontFamily:"'Syne',sans-serif",fontSize:".95rem"}}>{fmt(pendVal)}</div>
+                  <div style={{fontSize:".65rem",color:"var(--tx5)"}}>pendente</div>
+                </div>
+              </div>
+            );
+          })()}
+
           {/* Meta mensal */}
           {(()=>{
             const goal=parseFloat(monthGoal)||0;
@@ -997,7 +1149,13 @@ export default function App(){
                   <div style={{display:"flex",alignItems:"center",gap:".5rem"}}>
                     <span style={{fontSize:".75rem",color:"#10b981",fontWeight:700}}>{fmt(monthRev)}</span>
                     <span style={{fontSize:".7rem",color:"var(--tx5)"}}>de</span>
-                    <input type="number" min="0" step="100" value={monthGoal} onChange={e=>{setMonthGoal(e.target.value);try{localStorage.setItem("cpro:goal",e.target.value)}catch{}}} placeholder="meta..." style={{width:95,background:"var(--inp)",border:"1px solid var(--bdr2)",borderRadius:".35rem",padding:".22rem .45rem",color:"var(--tx)",fontSize:".75rem",fontFamily:"'DM Sans',sans-serif",outline:"none"}}/>
+                    <input type="number" min="0" step="100" value={monthGoal} onChange={e=>setMonthGoal(e.target.value)} placeholder="R$ meta..." style={{width:105,background:"var(--inp)",border:"1px solid var(--bdr2)",borderRadius:".35rem .0rem .0rem .35rem",padding:".22rem .45rem",color:"var(--tx)",fontSize:".75rem",fontFamily:"'DM Sans',sans-serif",outline:"none"}}/>
+                    <button onClick={async()=>{
+                      try{
+                        await supabase.from("app_settings").upsert({key:"monthgoal",value:monthGoal,updated_at:nowISO(),updated_by:cu.display_name},{onConflict:"key"});
+                        toast$("🎯 Meta salva: "+fmt(parseFloat(monthGoal)||0));
+                      }catch(e){toast$("Erro ao salvar.","#f56565");}
+                    }} style={{padding:".22rem .6rem",borderRadius:".0rem .35rem .35rem .0rem",background:"linear-gradient(135deg,#4f5ef0,#8b44f0)",color:"#fff",border:"none",fontSize:".72rem",fontFamily:"'DM Sans',sans-serif",fontWeight:700,cursor:"pointer"}}>Salvar</button>
                   </div>
                 </div>
                 <div style={{height:7,background:"var(--bdr)",borderRadius:4}}>
@@ -1083,7 +1241,7 @@ export default function App(){
                     <Badge color="#8b44f0" sm>{s.quantity} un</Badge>
                     {s.unit_price===0&&<Badge color="#f59e0b" sm>Cortesia</Badge>}
                     {s.batch_id&&<Badge color="#44475a" sm>Lote</Badge>}
-                    <Badge color="#0891b2" sm>{s.payment_method}</Badge>
+                    <Badge color={s.payment_method==="Crédito Parcelado"?"#8b44f0":s.payment_method==="Débito"?"#0891b2":s.payment_method==="PIX"?"#10b981":s.payment_method==="Dinheiro"?"#f59e0b":"#0891b2"} sm>{s.payment_method}</Badge>
                   </div>
                   <div style={{fontSize:".67rem",color:"var(--tx5)"}}>{s.date}{s.client_name&&` · 👤 ${s.client_name}`}{s.notes&&` · ${s.notes}`}</div>
                 </div>
@@ -1178,6 +1336,8 @@ export default function App(){
             <div style={{display:"flex",gap:".4rem",flexWrap:"wrap",alignItems:"center"}}>
               <XBtn rows={fCash.map(x=>({Data:x.date,Descrição:x.description,Tipo:x.type==="entrada"?"Entrada":"Saída",Valor:fmt(x.value),Categoria:x.category||"",Produto:x.product_name||""}))} name="caixa-caixapro" sheet="Caixa"/>
               <PBtn cols={[{k:"Data",l:"Data"},{k:"Descrição",l:"Descrição"},{k:"Tipo",l:"Tipo"},{k:"Valor",l:"Valor"},{k:"Categoria",l:"Categoria"}]} rows={fCash.map(x=>({Data:x.date,Descrição:x.description,Tipo:x.type==="entrada"?"Entrada":"Saída",Valor:fmt(x.value),Categoria:x.category||""}))} name="caixa-caixapro" title="Relatório de Caixa"/>
+              <Btn sm v="ghost" onClick={()=>{setLocalTaxes(JSON.parse(JSON.stringify(cardTaxes)));setShowCardConfig(true);}}>💳 Taxas de Cartão</Btn>
+              <Btn sm v="ghost" onClick={()=>{setLocalTaxes(JSON.parse(JSON.stringify(cardTaxes)));setShowCardConfig(true);}}>💳 Taxas</Btn>
               {canEdit&&<Btn sm onClick={()=>setModal("cashTx")}><Ic n="plus" s={12}/>Lançamento</Btn>}
             </div>
           </div>
@@ -1545,12 +1705,64 @@ export default function App(){
               {clients.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}
             </select>
           </Field>
-          <Field label="Forma de Pagamento">
+          <div>
+            <div style={{fontSize:".68rem",color:"var(--sub)",textTransform:"uppercase",letterSpacing:".06em",marginBottom:".3rem"}}>Forma de Pagamento</div>
             <select value={cartPayment} onChange={e=>setCartPayment(e.target.value)} style={IS}>
-              {PAYS.map(m=><option key={m} value={m}>{m}</option>)}
+              <optgroup label="Sem taxa">
+                {PAYS_SIMPLES.map(m=><option key={m} value={m}>{m}</option>)}
+              </optgroup>
+              <optgroup label="Cartão">
+                <option value="Débito">Débito</option>
+                <option value="Crédito à Vista">Crédito à Vista</option>
+                <option value="Crédito Parcelado">Crédito Parcelado</option>
+              </optgroup>
             </select>
-          </Field>
+          </div>
         </R2>
+        {cartIsCard&&(
+          <div style={{background:"var(--pill)",borderRadius:".5rem",padding:".65rem .85rem",marginBottom:".5rem"}}>
+            <div style={{fontSize:".68rem",color:"var(--sub)",textTransform:"uppercase",letterSpacing:".05em",marginBottom:".45rem",fontWeight:700}}>💳 Bandeira</div>
+            <div style={{display:"flex",gap:".35rem",flexWrap:"wrap",marginBottom:cartTaxRate>0?".55rem":0}}>
+              {CARD_BRANDS.map(b=>(
+                <button key={b} onClick={()=>setCartCardBrand(b)} style={{padding:".3rem .7rem",borderRadius:".4rem",fontSize:".76rem",fontFamily:"'DM Sans',sans-serif",fontWeight:600,border:"1px solid "+(cartCardBrand===b?"#4f5ef0":"var(--bdr2)"),background:cartCardBrand===b?"#4f5ef0":"transparent",color:cartCardBrand===b?"#fff":"var(--navoff)"}}>
+                  {b}
+                </button>
+              ))}
+            </div>
+            {cartTaxRate>0&&cartTotal>0&&(
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:".4rem"}}>
+                {[{l:"Bruto",v:fmt(cartTotal),c:"var(--tx)"},{l:"Taxa "+fmtPct(cartTaxRate),v:"- "+fmt(cartTaxAmount),c:"#f56565"},{l:"Líquido",v:fmt(cartNetTotal),c:"#10b981"}].map(m=>(
+                  <div key={m.l} style={{textAlign:"center",background:"var(--sumbox)",borderRadius:".4rem",padding:".4rem .3rem"}}>
+                    <div style={{fontSize:".58rem",color:"var(--sub)",textTransform:"uppercase",marginBottom:".1rem"}}>{m.l}</div>
+                    <div style={{fontSize:".82rem",fontWeight:700,color:m.c,fontFamily:"'Syne',sans-serif"}}>{m.v}</div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+        {cartPayment==="Crédito Parcelado"&&(
+          <div style={{background:"#4f5ef015",border:"1px solid #4f5ef040",borderRadius:".5rem",padding:".65rem .85rem",marginBottom:".5rem"}}>
+            <div style={{fontSize:".68rem",color:"#4f5ef0",textTransform:"uppercase",letterSpacing:".05em",marginBottom:".45rem",fontWeight:700}}>Número de Parcelas</div>
+            <div style={{display:"flex",gap:".3rem",flexWrap:"wrap",marginBottom:".45rem"}}>
+              {[2,3,4,5,6,7,8,9,10,11,12].map(n=>(
+                <button key={n} onClick={()=>setCartParcelas(n)} style={{padding:".28rem .6rem",borderRadius:".35rem",fontSize:".75rem",fontFamily:"'DM Sans',sans-serif",fontWeight:700,border:"1px solid "+(cartParcelas===n?"#4f5ef0":"var(--bdr2)"),background:cartParcelas===n?"#4f5ef0":"transparent",color:cartParcelas===n?"#fff":"var(--navoff)"}}>
+                  {n}x
+                </button>
+              ))}
+            </div>
+            {cartNetTotal>0&&(
+              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",background:"var(--sumbox)",borderRadius:".4rem",padding:".45rem .7rem",marginBottom:".35rem"}}>
+                <span style={{fontSize:".75rem",color:"var(--tx4)"}}>{cartParcelas}x de (líquido)</span>
+                <span style={{fontSize:".88rem",fontWeight:700,color:"#4f5ef0",fontFamily:"'Syne',sans-serif"}}>{fmt(cartInstallmentNet)}</span>
+              </div>
+            )}
+            <div style={{fontSize:".7rem",color:"#8b44f0",display:"flex",gap:".3rem",alignItems:"center"}}>
+              <Ic n="info" s={11}/>Parcelas criadas em A Receber com valor líquido
+            </div>
+          </div>
+        )}
+        )}
         <Inp label="Observações" hint="opcional" placeholder="Ex: Entregar no período da tarde..." value={cartNotes} onChange={e=>setCartNotes(e.target.value)}/>
 
         {/* ── RESUMO TOTAL ── */}
@@ -1989,6 +2201,125 @@ export default function App(){
         </div>
       </Modal>
     )}
+
+
+    {/* ══ CARD CONFIG ══ */}
+    {showCardConfig&&(()=>{
+      return(
+        <Modal title="💳 Taxas de Cartão" onClose={()=>setShowCardConfig(false)} icon="dollar" wide>
+          <div style={{background:"var(--infobox)",borderRadius:".45rem",padding:".5rem .8rem",marginBottom:".85rem",fontSize:".73rem",color:"#4f5ef0",display:"flex",gap:".3rem",alignItems:"center"}}>
+            <Ic n="info" s={12}/>Taxas cobradas pelas operadoras. Afetam o valor líquido nas vendas com cartão.
+          </div>
+          <div style={{overflowX:"auto",marginBottom:"1rem"}}>
+            <table style={{width:"100%",borderCollapse:"collapse",fontSize:".78rem"}}>
+              <thead>
+                <tr style={{borderBottom:"2px solid var(--bdr)"}}>
+                  <th style={{textAlign:"left",padding:".5rem .6rem",color:"var(--sub)",fontSize:".68rem",textTransform:"uppercase",fontWeight:600}}>Bandeira</th>
+                  {CARD_MODES.map(m=><th key={m.key} style={{textAlign:"center",padding:".5rem .4rem",color:"var(--sub)",fontSize:".68rem",textTransform:"uppercase",fontWeight:600}}>{m.label}</th>)}
+                </tr>
+              </thead>
+              <tbody>
+                {CARD_BRANDS.map(brand=>(
+                  <tr key={brand} style={{borderBottom:"1px solid var(--sep)"}}>
+                    <td style={{padding:".55rem .6rem",fontWeight:700,color:"var(--tx)",whiteSpace:"nowrap"}}>
+                      <span style={{background:"#4f5ef020",color:"#4f5ef0",borderRadius:".3rem",padding:".15rem .5rem",fontSize:".75rem"}}>{brand}</span>
+                    </td>
+                    {CARD_MODES.map(mode=>(
+                      <td key={mode.key} style={{padding:".4rem"}}>
+                        <div style={{position:"relative",display:"flex",alignItems:"center"}}>
+                          <input type="number" min="0" max="20" step="0.01"
+                            value={localTaxes[brand]?.[mode.key]||""}
+                            onChange={e=>updateLocalTax(brand,mode.key,e.target.value)}
+                            style={{...IS,textAlign:"center",paddingRight:"1.4rem",fontSize:".8rem",width:80}}
+                          />
+                          <span style={{position:"absolute",right:".45rem",fontSize:".7rem",color:"var(--tx5)"}}>%</span>
+                        </div>
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div style={{background:"var(--pill)",borderRadius:".5rem",padding:".65rem .85rem",marginBottom:"1rem",fontSize:".73rem",color:"var(--tx4)"}}>
+            💡 Exemplo: Venda R$ 100 com Visa Débito a 1.99% → taxa R$ 1,99 → líquido R$ 98,01
+          </div>
+          <div style={{display:"flex",gap:".5rem",justifyContent:"space-between"}}>
+            <Btn v="ghost" onClick={()=>setLocalTaxes(JSON.parse(JSON.stringify(DEFAULT_TAXES)))}> Restaurar padrões</Btn>
+            <div style={{display:"flex",gap:".5rem"}}>
+              <Btn v="ghost" onClick={()=>setShowCardConfig(false)}>Cancelar</Btn>
+              <Btn v="ok" onClick={()=>{saveCardTaxes(localTaxes);setShowCardConfig(false);}}><Ic n="save" s={13}/>Salvar Taxas</Btn>
+            </div>
+          </div>
+        </Modal>
+      );
+    })()}
+
+    {/* ══ GOALS SCREEN ══ */}
+    {showGoals&&(()=>{
+      const MONTHS=["Jan","Fev","Mar","Abr","Mai","Jun","Jul","Ago","Set","Out","Nov","Dez"];
+      const now=new Date();
+      const rows=MONTHS.map((mName,mi)=>{
+        const key=goalYear+"-"+(mi+1).toString().padStart(2,"0");
+        const goal=monthlyGoals[key]||0;
+        const monthStart=new Date(goalYear,mi,1);
+        const monthEnd=new Date(goalYear,mi+1,0,23,59,59);
+        const real=cashTx.filter(t=>t.type==="entrada"&&new Date(t.created_at)>=monthStart&&new Date(t.created_at)<=monthEnd).reduce((a,t)=>a+t.value,0);
+        const pct=goal>0?Math.min((real/goal)*100,100):0;
+        const isCurrent=now.getFullYear()===goalYear&&now.getMonth()===mi;
+        return{key,mName,mi,goal,real,pct,isCurrent};
+      });
+      const totalGoal=rows.reduce((a,r)=>a+r.goal,0);
+      const totalReal=rows.reduce((a,r)=>a+r.real,0);
+      return(
+        <Modal title="📅 Metas & Histórico de Vendas" onClose={()=>setShowGoals(false)} icon="analytics" wide>
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:"1rem"}}>
+            <div style={{display:"flex",alignItems:"center",gap:".5rem"}}>
+              <button onClick={()=>setGoalYear(y=>y-1)} style={{background:"var(--pill)",border:"1px solid var(--bdr2)",borderRadius:".4rem",padding:".3rem .65rem",color:"var(--tx)",cursor:"pointer",fontFamily:"'DM Sans',sans-serif",fontWeight:600,fontSize:".82rem"}}>‹</button>
+              <span style={{fontFamily:"'Syne',sans-serif",fontWeight:800,fontSize:"1.05rem",color:"var(--tx)",minWidth:60,textAlign:"center"}}>{goalYear}</span>
+              <button onClick={()=>setGoalYear(y=>y+1)} style={{background:"var(--pill)",border:"1px solid var(--bdr2)",borderRadius:".4rem",padding:".3rem .65rem",color:"var(--tx)",cursor:"pointer",fontFamily:"'DM Sans',sans-serif",fontWeight:600,fontSize:".82rem"}}>›</button>
+            </div>
+            <div style={{display:"flex",gap:".75rem",fontSize:".75rem"}}>
+              <div style={{textAlign:"right"}}>
+                <div style={{color:"var(--tx5)",fontSize:".65rem",textTransform:"uppercase",marginBottom:".08rem"}}>Meta anual</div>
+                <div style={{fontWeight:700,color:"#4f5ef0",fontFamily:"'Syne',sans-serif"}}>{fmt(totalGoal)}</div>
+              </div>
+              <div style={{textAlign:"right"}}>
+                <div style={{color:"var(--tx5)",fontSize:".65rem",textTransform:"uppercase",marginBottom:".08rem"}}>Realizado</div>
+                <div style={{fontWeight:700,color:"#10b981",fontFamily:"'Syne',sans-serif"}}>{fmt(totalReal)}</div>
+              </div>
+              <div style={{textAlign:"right"}}>
+                <div style={{color:"var(--tx5)",fontSize:".65rem",textTransform:"uppercase",marginBottom:".08rem"}}>% anual</div>
+                <div style={{fontWeight:700,color:totalGoal>0&&totalReal>=totalGoal?"#10b981":"#f59e0b",fontFamily:"'Syne',sans-serif"}}>{totalGoal>0?fmtPct((totalReal/totalGoal)*100):"—"}</div>
+              </div>
+            </div>
+          </div>
+          <div style={{display:"grid",gap:".5rem",marginBottom:"1rem"}}>
+            {rows.map(r=>(
+              <div key={r.key} style={{background:r.isCurrent?"linear-gradient(135deg,#4f5ef010,#10b98108)":"var(--card)",border:"1px solid "+(r.isCurrent?"#4f5ef040":"var(--bdr)"),borderRadius:".65rem",padding:".7rem .85rem"}}>
+                <div style={{display:"flex",alignItems:"center",gap:".75rem",marginBottom:".35rem"}}>
+                  <span style={{fontWeight:700,fontSize:".82rem",color:r.isCurrent?"#4f5ef0":"var(--tx)",minWidth:30}}>{r.mName}</span>
+                  {r.isCurrent&&<span style={{fontSize:".6rem",background:"#4f5ef020",color:"#4f5ef0",borderRadius:"99px",padding:".1rem .4rem",fontWeight:700}}>atual</span>}
+                  <div style={{flex:1}}/>
+                  <div style={{display:"flex",alignItems:"center",gap:".4rem"}}>
+                    <span style={{fontSize:".75rem",color:r.real>=r.goal&&r.goal>0?"#10b981":"var(--tx3)",fontWeight:600}}>{fmt(r.real)}</span>
+                    <span style={{fontSize:".68rem",color:"var(--tx5)"}}>de</span>
+                    <div style={{position:"relative",display:"flex",alignItems:"center"}}>
+                      <input type="number" min="0" step="100" value={r.goal||""} onChange={e=>saveMonthlyGoal(r.key,e.target.value)} placeholder="meta..." style={{width:100,background:"var(--inp)",border:"1px solid var(--bdr2)",borderRadius:".35rem",padding:".22rem .45rem",color:"var(--tx)",fontSize:".75rem",fontFamily:"'DM Sans',sans-serif",outline:"none",textAlign:"right"}}/>
+                    </div>
+                    <span style={{fontSize:".72rem",fontWeight:700,color:r.pct>=100?"#10b981":r.pct>=70?"#f59e0b":"var(--tx5)",minWidth:42,textAlign:"right"}}>{r.goal>0?fmtPct(r.pct):"—"}</span>
+                  </div>
+                </div>
+                <div style={{height:6,background:"var(--bdr)",borderRadius:3}}>
+                  <div style={{height:"100%",width:r.pct+"%",background:r.pct>=100?"linear-gradient(90deg,#10b981,#059669)":r.pct>=70?"linear-gradient(90deg,#f59e0b,#d97706)":"linear-gradient(90deg,#4f5ef0,#8b44f0)",borderRadius:3,transition:"width .5s"}}/>
+                </div>
+              </div>
+            ))}
+          </div>
+          <div style={{textAlign:"center",fontSize:".7rem",color:"var(--tx5)"}}>As metas são salvas automaticamente ao digitar · Dados de realizado vêm do Caixa</div>
+        </Modal>
+      );
+    })()}
 
     {/* Logout */}
     {logoutC&&(
