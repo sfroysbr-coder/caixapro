@@ -2135,6 +2135,8 @@ export default function App(){
             </div>
           )}
 
+          </div>{/* fecha scroll wrapper overflowX */}
+
           {/* Botão adicionar produto */}
           <button
             onClick={cartAddLine}
