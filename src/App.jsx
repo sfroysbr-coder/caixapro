@@ -1844,7 +1844,7 @@ export default function App(){
             </div>
             {/* KPIs pedidos */}
             <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:".6rem",marginBottom:".75rem"}}>
-              <KCard label="Pendentes" value={fmtN(orders.filter(o=>o.status==="pendente"||o.status==="parcial").length)} sub={fmt(orders.filter(o=>o.status==="pendente"||o.status==="parcial").reduce((a,o)=>a+o.remaining_value,0)+" restante"} color="#f59e0b"/>
+              <KCard label="Pendentes" value={fmtN(orders.filter(o=>o.status==="pendente"||o.status==="parcial").length)} sub={fmt(orders.filter(o=>o.status==="pendente"||o.status==="parcial").reduce((a,o)=>a+o.remaining_value,0))+" restante"} color="#f59e0b"/>
               <KCard label="Recebidos" value={fmtN(orders.filter(o=>o.status==="recebido").length)} color="#10b981"/>
               <KCard label="Total pago" value={fmt(orders.reduce((a,o)=>a+o.initial_value+(o.remaining_paid||0),0))} color="#4f5ef0"/>
               <KCard label="A pagar" value={fmt(orders.filter(o=>o.status==="pendente").reduce((a,o)=>a+o.remaining_value,0))} color="#f56565"/>
