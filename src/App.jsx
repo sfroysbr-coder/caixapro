@@ -525,7 +525,7 @@ function Analytics({onClose,sales,cashTx,products,clients,dark,receivables=[],or
             {l:"Parcelas a receber",v:fmtN(receivables.filter(r=>!r.paid&&r.description&&r.description.includes("Parcela")).length),c:"#8b44f0"},
           ]},
           {title:"Pedidos & Compras",color:"#f59e0b",icon:"pkg",rows:[
-            {l:"Pedidos pendentes",v:orders.filter(o=>o.status==="pendente").length+" pedido(s)",c:"#f59e0b"},
+            {l:"Pedidos pendentes",v:orders.filter(o=>o.status==="pendente"||o.status==="parcial").length+" pedido(s)",c:"#f59e0b"},
             {l:"A pagar (restante)",v:fmt(orders.filter(o=>o.status==="pendente").reduce((a,o)=>a+o.remaining_value,0)),c:"#f56565"},
             {l:"Pedidos recebidos",v:orders.filter(o=>o.status==="recebido").length+" pedido(s)",c:"#10b981"},
             {l:"Total investido",v:fmt(orders.reduce((a,o)=>a+o.initial_value+(o.remaining_paid||0),0)),c:"#4f5ef0"},
@@ -1136,22 +1136,31 @@ export default function App(){
   const deleteOrder=async(order)=>{
     const items=JSON.parse(order.items||"[]");
     try{
-      // 1. Se recebido: reverter estoque
+      // 1. Reverter estoque APENAS dos itens efetivamente recebidos
       if(order.status==="recebido"||order.status==="parcial"){
         for(const item of items){
+          // Só reverte se o item foi marcado como recebido
+          if(!item.received)continue;
+          const qtyToRevert=item.received_qty||item.qty;
           const prod=products.find(p=>p.id===item.product_id||p.name===item.product_name);
-          if(prod){
-            await supabase.from("products").update({stock_qty:Math.max(0,prod.stock_qty-item.qty)}).eq("id",prod.id);
+          if(prod&&qtyToRevert>0){
+            await supabase.from("products")
+              .update({stock_qty:Math.max(0,prod.stock_qty-qtyToRevert)})
+              .eq("id",prod.id);
           }
         }
       }
-      // 2. Reverter pagamentos no caixa
+      // 2. Reverter TODOS os pagamentos lançados no caixa (sinal + recebimentos)
       await supabase.from("cash_transactions").delete().eq("sale_id",order.id);
-      // 3. Excluir pedido
+      // 3. Excluir o pedido
       await supabase.from("orders").delete().eq("id",order.id);
-      const msg=order.status==="recebido"
-        ?"🔄 Pedido excluído · Estoque e caixa revertidos"
-        :"🔄 Pedido excluído · Sinal devolvido ao caixa";
+
+      // 4. Feedback detalhado
+      const recItems=items.filter(i=>i.received);
+      const totalPaid=(order.initial_value||0)+(order.remaining_paid||0);
+      let msg="🔄 Pedido excluído";
+      if(recItems.length>0)msg+=" · "+recItems.length+" item(s) removido(s) do estoque";
+      if(totalPaid>0)msg+=" · "+fmt(totalPaid)+" revertido(s) do caixa";
       toast$(msg,"#f59e0b");
     }catch(ex){toast$("Erro: "+ex.message,"#f56565");}
   };
@@ -1437,7 +1446,7 @@ export default function App(){
           )}
           {/* Pedidos pendentes */}
           {(()=>{
-            const pedPend=orders.filter(o=>o.status==="pendente");
+            const pedPend=orders.filter(o=>o.status==="pendente"||o.status==="parcial");
             const perdidos=orders.filter(o=>o.status==="perdido");
             if(pedPend.length===0&&perdidos.length===0)return null;
             const allItems=pedPend.flatMap(o=>JSON.parse(o.items||"[]"));
@@ -1835,7 +1844,7 @@ export default function App(){
             </div>
             {/* KPIs pedidos */}
             <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:".6rem",marginBottom:".75rem"}}>
-              <KCard label="Pendentes" value={fmtN(orders.filter(o=>o.status==="pendente").length)} sub={fmt(orders.filter(o=>o.status==="pendente").reduce((a,o)=>a+o.remaining_value,0)+" restante")} color="#f59e0b"/>
+              <KCard label="Pendentes" value={fmtN(orders.filter(o=>o.status==="pendente"||o.status==="parcial").length)} sub={fmt(orders.filter(o=>o.status==="pendente"||o.status==="parcial").reduce((a,o)=>a+o.remaining_value,0)+" restante"} color="#f59e0b"/>
               <KCard label="Recebidos" value={fmtN(orders.filter(o=>o.status==="recebido").length)} color="#10b981"/>
               <KCard label="Total pago" value={fmt(orders.reduce((a,o)=>a+o.initial_value+(o.remaining_paid||0),0))} color="#4f5ef0"/>
               <KCard label="A pagar" value={fmt(orders.filter(o=>o.status==="pendente").reduce((a,o)=>a+o.remaining_value,0))} color="#f56565"/>
@@ -1853,7 +1862,7 @@ export default function App(){
                 const statusLabel=order.status==="recebido"?"✅ Recebido":order.status==="cancelado"?"❌ Cancelado":order.status==="perdido"?"💀 Perdido":"🟡 Pendente";
                 const pctPaid=order.total_value>0?((order.initial_value+(order.remaining_paid||0))/order.total_value)*100:0;
                 return(
-                  <div key={order.id} style={{background:"var(--card)",border:"1px solid "+(order.status==="pendente"?"#f59e0b30":order.status==="recebido"?"#10b98130":"var(--bdr)"),borderRadius:".75rem",padding:".9rem 1rem",marginBottom:".65rem"}}>
+                  <div key={order.id} style={{background:"var(--card)",border:"1px solid "+(order.status==="pendente"?"#f59e0b30":order.status==="recebido"?"#10b98130":order.status==="parcial"?"#0891b230":"var(--bdr)"),borderRadius:".75rem",padding:".9rem 1rem",marginBottom:".65rem"}}>
                     <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",marginBottom:".55rem"}}>
                       <div style={{flex:1}}>
                         <div style={{display:"flex",alignItems:"center",gap:".45rem",flexWrap:"wrap",marginBottom:".2rem"}}>
@@ -1869,35 +1878,47 @@ export default function App(){
                       </div>
                       <div style={{display:"flex",gap:".3rem",flexShrink:0,marginLeft:".75rem"}}>
                         <button onClick={()=>exportOrderPDF(order)} title="Gerar PDF do pedido" style={{background:"#450a0a",border:"1px solid #7f1d1d",borderRadius:".4rem",padding:".28rem .5rem",color:"#f87171",display:"flex",alignItems:"center",cursor:"pointer"}}><Ic n="pdf" s={13}/></button>
-                        {order.status==="pendente"&&(
+                        {(order.status==="pendente"||order.status==="parcial")&&(
                           <button onClick={()=>{
-                            const items=JSON.parse(order.items||"[]");
+                            const itsAll=JSON.parse(order.items||"[]");
                             const initChecked={};
-                            items.forEach((it,i)=>{if(!it.received)initChecked[i]={checked:false,qty:it.qty};});
+                            itsAll.forEach((it,i)=>{if(!it.received)initChecked[i]={checked:false,qty:it.qty};});
                             setReceiveChecked(initChecked);
                             setReceivePayment("");
                             setShowReceiveModal(order);
-                          }} style={{background:"#10b98115",border:"1px solid #10b98130",borderRadius:".45rem",padding:".32rem .65rem",color:"#10b981",fontSize:".73rem",fontFamily:"'DM Sans',sans-serif",fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}}>✅ Receber</button>
+                          }} style={{background:"#10b98115",border:"1px solid #10b98130",borderRadius:".45rem",padding:".32rem .65rem",color:"#10b981",fontSize:".73rem",fontFamily:"'DM Sans',sans-serif",fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}}>
+                            {order.status==="parcial"?"📦 Continuar Recebimento":"✅ Receber"}
+                          </button>
                         )}
-                        {order.status==="pendente"&&isAdmin&&(
-                          <button onClick={()=>markOrderLost(order)} title="Marcar como perdido (sinal não recuperado)" style={{background:"#1e1010",border:"1px solid #3a1515",borderRadius:".4rem",padding:".28rem .55rem",color:"#f59e0b",fontSize:".7rem",fontFamily:"'DM Sans',sans-serif",fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}}>💀 Perdido</button>
+                        {(order.status==="pendente"||order.status==="parcial")&&isAdmin&&(
+                          <button onClick={()=>markOrderLost(order)} title="Marcar como perdido" style={{background:"#1e1010",border:"1px solid #3a1515",borderRadius:".4rem",padding:".28rem .55rem",color:"#f59e0b",fontSize:".7rem",fontFamily:"'DM Sans',sans-serif",fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}}>💀</button>
                         )}
-                        {canEdit&&order.status==="pendente"&&<button onClick={()=>{setEditingOrder(order);}} style={{background:"none",border:"none",color:"#4f5ef0",padding:".2rem"}}><Ic n="edit" s={13}/></button>}
+                        {canEdit&&(order.status==="pendente"||order.status==="parcial")&&<button onClick={()=>setEditingOrder(order)} style={{background:"none",border:"none",color:"#4f5ef0",padding:".2rem"}}><Ic n="edit" s={13}/></button>}
                         {isAdmin&&<button onClick={()=>deleteOrder(order)} style={{background:"none",border:"none",color:"var(--tx6)",padding:".2rem"}} title="Excluir e reverter tudo"><Ic n="trash" s={13}/></button>}
                       </div>
                     </div>
                     {/* Financeiro */}
                     <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:".38rem",marginBottom:".5rem"}}>
-                      {[{l:"Total pedido",v:fmt(order.total_value),c:"var(--tx)"},{l:"Sinal pago ("+order.initial_pct+"%)",v:fmt(order.initial_value),c:"#f59e0b"},{l:"Restante",v:fmt(order.remaining_value),c:"#f56565"},{l:order.status==="recebido"?"Pago recebim.":"A pagar",v:fmt(order.status==="recebido"?order.remaining_paid||0:order.remaining_value),c:order.status==="recebido"?"#10b981":"#f56565"}].map(m=>(
+                      {[{l:"Total pedido",v:fmt(order.total_value),c:"var(--tx)"},{l:"Sinal pago ("+order.initial_pct+"%)",v:fmt(order.initial_value),c:"#f59e0b"},{l:"Restante",v:fmt(order.remaining_value),c:"#f56565"},{l:order.status==="recebido"?"Pago recebim.":order.status==="parcial"?"Pago parcial":"A pagar",v:fmt(order.status==="recebido"||order.status==="parcial"?order.remaining_paid||0:order.remaining_value),c:order.status==="recebido"?"#10b981":order.status==="parcial"?"#0891b2":"#f56565"}].map(m=>(
                         <Pill key={m.l} label={m.l} value={m.v} color={m.c}/>
                       ))}
                     </div>
-                    {/* Barra de pagamento */}
-                    <div>
-                      <div style={{height:5,background:"var(--bdr)",borderRadius:3}}>
-                        <div style={{height:"100%",width:Math.min(100,pctPaid)+"%",background:pctPaid>=100?"linear-gradient(90deg,#10b981,#059669)":"linear-gradient(90deg,#f59e0b,#d97706)",borderRadius:3,transition:"width .5s"}}/>
-                      </div>
-                      <div style={{fontSize:".62rem",color:"var(--sub)",marginTop:".2rem",textAlign:"right"}}>{fmtPct(pctPaid)} pago</div>
+                    {/* Barras de progresso — itens + pagamento */}
+                    <div style={{display:"grid",gap:".3rem"}}>
+                      {/* Barra itens recebidos */}
+                      {(()=>{
+                        const recCount=items.filter(i=>i.received).length;
+                        const pctItems=items.length>0?(recCount/items.length)*100:0;
+                        return(<>
+                          <div style={{height:5,background:"var(--bdr)",borderRadius:3}}>
+                            <div style={{height:"100%",width:Math.min(100,pctItems)+"%",background:pctItems>=100?"linear-gradient(90deg,#10b981,#059669)":"linear-gradient(90deg,#0891b2,#0e7490)",borderRadius:3,transition:"width .5s"}}/>
+                          </div>
+                          <div style={{display:"flex",justifyContent:"space-between",fontSize:".6rem",color:"var(--sub)"}}>
+                            <span style={{color:"#0891b2"}}>📦 {recCount}/{items.length} produto(s) recebido(s)</span>
+                            <span style={{color:pctPaid>=100?"#10b981":"var(--sub)"}}>💰 {fmtPct(pctPaid)} pago</span>
+                          </div>
+                        </>);
+                      })()}
                     </div>
                     {/* Itens detalhados */}
                     {items.length>0&&(
