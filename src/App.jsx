@@ -142,7 +142,7 @@ const Pill=({label,value,color})=>(
 
 const Modal=({title,onClose,children,wide,full,icon})=>(
   <div style={{position:"fixed",inset:0,zIndex:300,background:"rgba(0,0,0,.78)",backdropFilter:"blur(6px)",display:"flex",alignItems:"center",justifyContent:"center",padding:".75rem"}}>
-    <div style={{background:"var(--bg3)",border:"1px solid var(--bdr2)",borderRadius:"1rem",width:"100%",maxWidth:full?"98vw":wide?700:500,maxHeight:"93vh",display:"flex",flexDirection:"column",boxShadow:"0 24px 64px var(--shadow)"}}>
+    <div style={{background:"var(--bg3)",border:"1px solid var(--bdr2)",borderRadius:window.innerWidth<640?".65rem":"1rem",width:"100%",maxWidth:full?"99vw":wide?Math.min(700,window.innerWidth-16):Math.min(500,window.innerWidth-16),maxHeight:"93vh",display:"flex",flexDirection:"column",boxShadow:"0 24px 64px var(--shadow)"}}>
       <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"1rem 1.4rem",borderBottom:"1px solid var(--bdr)",position:"sticky",top:0,background:"var(--bg3)",borderRadius:"1rem 1rem 0 0",zIndex:1}}>
         <div style={{display:"flex",alignItems:"center",gap:".4rem"}}>
           {icon&&<span style={{color:"#4f5ef0"}}><Ic n={icon} s={15}/></span>}
@@ -166,7 +166,7 @@ const Field=({label,hint,children})=>(
 );
 const Inp=({label,hint,...p})=><Field label={label} hint={hint}><input {...p} style={{...IS,...p.style}}/></Field>;
 const Sel=({label,hint,children,...p})=><Field label={label} hint={hint}><select {...p} style={{...IS,...p.style}}>{children}</select></Field>;
-const R2=({children,gap=".65rem"})=>{const k=Array.isArray(children)?children.filter(Boolean):[children];return <div style={{display:"grid",gridTemplateColumns:`repeat(${k.length},1fr)`,gap}}>{children}</div>;};
+const R2=({children,gap=".65rem",noStack})=>{const k=Array.isArray(children)?children.filter(Boolean):[children];const mob=!noStack&&window.innerWidth<640;return <div style={{display:"grid",gridTemplateColumns:mob?"1fr":`repeat(${k.length},1fr)`,gap}}>{children}</div>;};
 
 // Botões Export
 const XBtn=({rows,name,sheet})=><button onClick={()=>exportXLS(rows,name,sheet)} style={{display:"inline-flex",alignItems:"center",gap:".3rem",padding:".32rem .65rem",borderRadius:".4rem",background:"#14532d",color:"#4ade80",border:"1px solid #166834",fontSize:".72rem",fontFamily:"'DM Sans',sans-serif",fontWeight:600}}><Ic n="xls" s={11}/>Excel</button>;
@@ -420,7 +420,7 @@ function Analytics({onClose,sales,cashTx,products,clients,dark,receivables=[],or
   return(
     <Modal title="Relatório Gerencial · Analytics" onClose={onClose} icon="analytics" full>
       {/* Filtros */}
-      <div style={{display:"flex",gap:".35rem",flexWrap:"wrap",marginBottom:"1rem",alignItems:"center"}}>
+      <div style={{display:"flex",gap:".35rem",flexWrap:"wrap",marginBottom:"1rem",alignItems:"center",overflowX:"auto",paddingBottom:".25rem"}}>
         <Ic n="cal" s={14}/>
         {RANGES.map(r=>(
           <button key={r.k} onClick={()=>setRange(r.k)} style={{padding:".28rem .65rem",borderRadius:"99px",border:`1px solid ${range===r.k?"#4f5ef0":"var(--bdr2)"}`,background:range===r.k?"#4f5ef020":"transparent",color:range===r.k?"#4f5ef0":"var(--navoff)",fontSize:".72rem",fontFamily:"'DM Sans',sans-serif",fontWeight:600}}>{r.l}</button>
@@ -433,7 +433,7 @@ function Analytics({onClose,sales,cashTx,products,clients,dark,receivables=[],or
       </div>
 
       {/* KPIs */}
-      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(130px,1fr))",gap:".6rem",marginBottom:"1rem"}}>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(120px,1fr))",gap:".6rem",marginBottom:"1rem"}}>
         <KCard label="Receita" value={fmt(rev)} sub={`${fC.filter(x=>x.type==="entrada").length} lançamentos`} color="#10b981" icon="up"/>
         <KCard label="Custos" value={fmt(cost)} color="#f56565" icon="dn"/>
         <KCard label="Lucro líquido" value={fmt(profit)} sub={fmtPct(margin)+" margem"} color={profit>=0?"#4f5ef0":"#f56565"}/>
@@ -445,7 +445,7 @@ function Analytics({onClose,sales,cashTx,products,clients,dark,receivables=[],or
         <KCard label="A Receber" value={fmt(receivables.filter(r=>!r.paid).reduce((a,r)=>a+r.value,0))} sub={receivables.filter(r=>!r.paid).length+" pendente(s)"} color="#f59e0b" icon="dollar"/>
       </div>
 
-      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:".85rem",marginBottom:".85rem"}}>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))",gap:".85rem",marginBottom:".85rem"}}>
         {/* Sparkline */}
         <div style={{background:"var(--card)",border:"1px solid var(--bdr)",borderRadius:".75rem",padding:"1rem"}}>
           <div style={{fontFamily:"'Syne',sans-serif",fontWeight:700,fontSize:".8rem",color:"var(--tx2)",marginBottom:".65rem",display:"flex",alignItems:"center",gap:".35rem"}}><Ic n="analytics" s={13}/>Receita · últimos 7 dias</div>
@@ -501,7 +501,7 @@ function Analytics({onClose,sales,cashTx,products,clients,dark,receivables=[],or
       </div>
 
       {/* Métricas avançadas */}
-      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(200px,1fr))",gap:".85rem",marginBottom:".85rem"}}>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))",gap:".85rem",marginBottom:".85rem"}}>
         {[
           {title:"Saúde Financeira",color:"#8b44f0",icon:"dollar",rows:[
             {l:"ROI (lucro/custo)",v:cost>0?fmtPct((profit/cost)*100):"—",c:profit>=0?"#10b981":"#f56565"},
@@ -567,11 +567,20 @@ function Analytics({onClose,sales,cashTx,products,clients,dark,receivables=[],or
 export default function App(){
   // Tema
   const[dark,setDark]=useState(getTheme);
-  // Sincroniza classe do body com o estado — garante persistência no F5
-  useEffect(()=>{
-    document.body.classList.toggle("light",!dark);
-  },[dark]);
+  useEffect(()=>{document.body.classList.toggle("light",!dark);},[dark]);
   const toggle=()=>setDark(v=>{const nv=!v;setTheme(nv);return nv;});
+
+  // ── Responsividade ──────────────────────────────────────────────
+  const[vw,setVw]=useState(()=>typeof window!=="undefined"?window.innerWidth:1024);
+  useEffect(()=>{
+    const h=()=>setVw(window.innerWidth);
+    window.addEventListener("resize",h,{passive:true});
+    return()=>window.removeEventListener("resize",h);
+  },[]);
+  const isMobile=vw<640;
+  const isTablet=vw<900;
+  // Helpers de responsividade
+  const cols=(mobile,tablet,desktop)=>isMobile?mobile:isTablet?tablet:desktop;
 
   // Auth
   const[cu,setCU]=useState(null);
@@ -1393,7 +1402,7 @@ export default function App(){
         </div>
         <div style={{display:"flex",alignItems:"center",gap:".6rem"}}>
           {(zeroStk.length>0||lowStk.length>0)&&<div style={{fontSize:".62rem",color:"#f59e0b",background:"#f59e0b15",borderRadius:"99px",padding:".18rem .5rem",border:"1px solid #f59e0b30",display:"flex",alignItems:"center",gap:".25rem"}}><Ic n="warn" s={10}/>{zeroStk.length>0?`${zeroStk.length} zerado(s)`:`${lowStk.length} baixo`}</div>}
-          <div style={{fontSize:".62rem",color:syncing?"#8b44f0":"var(--tx6)",display:"flex",alignItems:"center",gap:".25rem"}}><Ic n="sync" s={10}/>{syncing?"...":lastSync||"—"}</div>
+          {!isMobile&&<div style={{fontSize:".62rem",color:syncing?"#8b44f0":"var(--tx6)",display:"flex",alignItems:"center",gap:".25rem"}}><Ic n="sync" s={10}/>{syncing?"...":lastSync||"—"}</div>}
           <button onClick={toggle} title={dark?"Modo claro":"Modo escuro"} style={{background:"none",border:"none",padding:".2rem",borderRadius:".35rem",color:dark?"#f59e0b":"#4f5ef0",display:"flex",alignItems:"center"}}>
             <Ic n={dark?"sun":"moon"} s={16}/>
           </button>
@@ -1408,15 +1417,15 @@ export default function App(){
       {/* ── NAV ── */}
       <div style={{background:"var(--bg2)",borderBottom:"1px solid var(--bdr)",padding:"0 .4rem",display:"flex",overflowX:"auto",transition:"background .3s"}}>
         {nav.map(item=>(
-          <button key={item.id} onClick={()=>{setTab(item.id);setSearch("");setFcat("all");}} style={{display:"flex",alignItems:"center",gap:".28rem",padding:".58rem .7rem",background:"none",border:"none",fontSize:".72rem",fontFamily:"'DM Sans',sans-serif",fontWeight:600,color:tab===item.id?"var(--navon)":"var(--navoff)",borderBottom:tab===item.id?"2px solid #4f5ef0":"2px solid transparent",transition:"all .2s",whiteSpace:"nowrap"}}>
-            <Ic n={item.n} s={12}/>{item.l}
+          <button key={item.id} onClick={()=>{setTab(item.id);setSearch("");setFcat("all");}} style={{display:"flex",alignItems:"center",gap:".28rem",padding:isMobile?".5rem .5rem":".58rem .7rem",background:"none",border:"none",fontSize:isMobile?".68rem":".72rem",fontFamily:"'DM Sans',sans-serif",fontWeight:600,color:tab===item.id?"var(--navon)":"var(--navoff)",borderBottom:tab===item.id?"2px solid #4f5ef0":"2px solid transparent",transition:"all .2s",whiteSpace:"nowrap"}}>
+            <Ic n={item.n} s={12}/>{isMobile?item.l.split(" ")[0]:item.l}
             {item.id==="estoque"&&zeroStk.length>0&&<span style={{background:"#f56565",color:"#fff",borderRadius:"99px",fontSize:".55rem",fontWeight:700,padding:"0 .28rem",lineHeight:"1.5"}}>{zeroStk.length}</span>}
           </button>
         ))}
       </div>
 
       {/* ── CONTEÚDO ── */}
-      <div style={{maxWidth:960,margin:"0 auto",padding:".9rem .8rem"}}>
+      <div style={{maxWidth:960,margin:"0 auto",padding:isMobile?".6rem .5rem":".9rem .8rem"}}>
 
         {/* ══ DASHBOARD ══ */}
         {tab==="dashboard"&&(<>
@@ -1427,12 +1436,12 @@ export default function App(){
             </div>
             <Btn v="info" onClick={()=>setShowA(true)}><Ic n="analytics" s={14}/> Relatório Gerencial</Btn>
           </div>
-          <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:".6rem",marginBottom:".7rem"}}>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(130px,1fr))",gap:".6rem",marginBottom:".7rem"}}>
             <KCard label="Receita" value={fmt(cashIn)} color="#10b981" icon="up"/>
             <KCard label="Custos" value={fmt(cashOut)} color="#f56565" icon="dn"/>
             <KCard label="Lucro" value={fmt(net)} sub={fmtPct(margin)+" margem"} color={net>=0?"#4f5ef0":"#f56565"}/>
           </div>
-          <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:".6rem",marginBottom:".7rem"}}>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(130px,1fr))",gap:".6rem",marginBottom:".7rem"}}>
             <KCard label="Vendas" value={fmtN(sales.length)} sub={fmtN(totalUnits)+" un"} color="#8b44f0" icon="sales"/>
             <KCard label="Estoque" value={products.length} sub={zeroStk.length>0?`${zeroStk.length} zerado(s)`:lowStk.length>0?`${lowStk.length} baixo(s)`:"ok"} color={zeroStk.length>0?"#f56565":lowStk.length>0?"#f59e0b":"#10b981"} icon="stock"/>
             <KCard label="Markup empresa" value={fmtPct(mrkp)} sub="lucro/custo" color="#f59e0b"/>
@@ -1514,7 +1523,7 @@ export default function App(){
                 );
               })()}
               {/* A Receber + Alertas */}
-              <div style={{display:"grid",gridTemplateColumns:pend.length>0?"1fr 1fr":"1fr",gap:".65rem",marginBottom:".65rem"}}>
+              <div style={{display:"grid",gridTemplateColumns:pend.length>0&&!isMobile?"repeat(auto-fit,minmax(180px,1fr))":"1fr",gap:".65rem",marginBottom:".65rem"}}>
                 {pend.length>0&&(
                   <div onClick={()=>setTab("recebiveis")} style={{background:"var(--card)",border:"1px solid #4f5ef030",borderRadius:".75rem",padding:".65rem .9rem",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
                     <div>
@@ -1537,7 +1546,7 @@ export default function App(){
             </>);
           })()}
 
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:".75rem"}}>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))",gap:".75rem"}}>
             <div style={{background:"var(--card)",border:"1px solid var(--bdr)",borderRadius:".75rem",padding:".9rem"}}>
               <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:".65rem"}}>
                 <div style={{fontFamily:"'Syne',sans-serif",fontWeight:700,fontSize:".8rem",color:"var(--tx2)",display:"flex",alignItems:"center",gap:".3rem"}}><Ic n="sales" s={12}/>Últimas Vendas</div>
@@ -1580,7 +1589,7 @@ export default function App(){
               {canEdit&&<Btn sm onClick={()=>setModal("sale")}><Ic n="plus" s={12}/>Nova</Btn>}
             </div>
           </div>
-          <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:".6rem",marginBottom:".7rem"}}>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(120px,1fr))",gap:".6rem",marginBottom:".7rem"}}>
             <KCard label="Total" value={fmtN(sales.length)} color="#4f5ef0"/>
             <KCard label="Receita" value={fmt(totalSalesRev)} color="#10b981"/>
             <KCard label="Unidades" value={fmtN(totalUnits)} color="#8b44f0"/>
@@ -1591,7 +1600,7 @@ export default function App(){
             <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Buscar produto ou cliente..." style={{...IS,paddingLeft:"2.1rem"}}/>
           </div>
           <div style={{background:"var(--card)",border:"1px solid var(--bdr)",borderRadius:".75rem"}}>
-            {fSales.length===0?<p style={{color:"var(--tx5)",textAlign:"center",padding:"2.5rem 0",fontSize:".8rem"}}>Nenhuma venda.</p>
+            {fSales.length===0?<div style={{textAlign:"center",padding:"2.5rem 1rem"}}><div style={{fontSize:"2rem",marginBottom:".5rem"}}>🛒</div><p style={{color:"var(--tx5)",fontSize:".8rem",marginBottom:".75rem"}}>Nenhuma venda registrada.</p>{canEdit&&<Btn sm onClick={()=>setModal("sale")}><Ic n="plus" s={12}/>Registrar venda</Btn>}</div>
             :fSales.map(s=>(
               <div key={s.id} style={{padding:".72rem 1rem",borderBottom:"1px solid var(--sep)",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
                 <div style={{flex:1,minWidth:0}}>
@@ -1631,7 +1640,7 @@ export default function App(){
               {canEdit&&<><Btn v="info" sm onClick={()=>setModal("stockEntry")}><Ic n="arrup" s={12}/>Entrada</Btn><Btn sm onClick={()=>setModal("produto")}><Ic n="plus" s={12}/>Produto</Btn></>}
             </div>
           </div>
-          <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:".6rem",marginBottom:".7rem"}}>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(120px,1fr))",gap:".6rem",marginBottom:".7rem"}}>
             <KCard label="Itens" value={products.length} color="#4f5ef0"/>
             <KCard label="Unidades" value={fmtN(products.reduce((a,p)=>a+p.stock_qty,0))} color="#8b44f0"/>
             <KCard label="Valor estoque" value={fmt(stockVal)} color="#f59e0b"/>
@@ -1726,7 +1735,7 @@ export default function App(){
             <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Buscar lançamento..." style={{...IS,paddingLeft:"2.1rem"}}/>
           </div>
           <div style={{background:"var(--card)",border:"1px solid var(--bdr)",borderRadius:".75rem"}}>
-            {fCash.length===0?<p style={{color:"var(--tx5)",fontSize:".8rem",textAlign:"center",padding:"2.5rem 0"}}>Nenhum lançamento.</p>
+            {fCash.length===0?<div style={{textAlign:"center",padding:"2.5rem 1rem"}}><div style={{fontSize:"2rem",marginBottom:".5rem"}}>💰</div><p style={{color:"var(--tx5)",fontSize:".8rem"}}>Nenhum lançamento no caixa.</p></div>
             :fCash.map(x=>(
               <div key={x.id} style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:".72rem 1rem",borderBottom:"1px solid var(--sep)"}}>
                 <div style={{flex:1,minWidth:0}}>
@@ -1843,7 +1852,7 @@ export default function App(){
               </div>
             </div>
             {/* KPIs pedidos */}
-            <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:".6rem",marginBottom:".75rem"}}>
+            <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(120px,1fr))",gap:".6rem",marginBottom:".75rem"}}>
               <KCard label="Pendentes" value={fmtN(orders.filter(o=>o.status==="pendente"||o.status==="parcial").length)} sub={fmt(orders.filter(o=>o.status==="pendente"||o.status==="parcial").reduce((a,o)=>a+o.remaining_value,0))+" restante"} color="#f59e0b"/>
               <KCard label="Recebidos" value={fmtN(orders.filter(o=>o.status==="recebido").length)} color="#10b981"/>
               <KCard label="Total pago" value={fmt(orders.reduce((a,o)=>a+o.initial_value+(o.remaining_paid||0),0))} color="#4f5ef0"/>
@@ -1894,11 +1903,11 @@ export default function App(){
                           <button onClick={()=>markOrderLost(order)} title="Marcar como perdido" style={{background:"#1e1010",border:"1px solid #3a1515",borderRadius:".4rem",padding:".28rem .55rem",color:"#f59e0b",fontSize:".7rem",fontFamily:"'DM Sans',sans-serif",fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}}>💀</button>
                         )}
                         {canEdit&&(order.status==="pendente"||order.status==="parcial")&&<button onClick={()=>setEditingOrder(order)} style={{background:"none",border:"none",color:"#4f5ef0",padding:".2rem"}}><Ic n="edit" s={13}/></button>}
-                        {isAdmin&&<button onClick={()=>deleteOrder(order)} style={{background:"none",border:"none",color:"var(--tx6)",padding:".2rem"}} title="Excluir e reverter tudo"><Ic n="trash" s={13}/></button>}
+                        {isAdmin&&<button onClick={()=>{if(window.confirm("Excluir pedido e reverter todo o fluxo? Esta ação não pode ser desfeita."))deleteOrder(order);}} style={{background:"none",border:"none",color:"var(--tx6)",padding:".2rem"}} title="Excluir e reverter tudo"><Ic n="trash" s={13}/></button>}
                       </div>
                     </div>
                     {/* Financeiro */}
-                    <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:".38rem",marginBottom:".5rem"}}>
+                    <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(100px,1fr))",gap:".38rem",marginBottom:".5rem"}}>
                       {[{l:"Total pedido",v:fmt(order.total_value),c:"var(--tx)"},{l:"Sinal pago ("+order.initial_pct+"%)",v:fmt(order.initial_value),c:"#f59e0b"},{l:"Restante",v:fmt(order.remaining_value),c:"#f56565"},{l:order.status==="recebido"?"Pago recebim.":order.status==="parcial"?"Pago parcial":"A pagar",v:fmt(order.status==="recebido"||order.status==="parcial"?order.remaining_paid||0:order.remaining_value),c:order.status==="recebido"?"#10b981":order.status==="parcial"?"#0891b2":"#f56565"}].map(m=>(
                         <Pill key={m.l} label={m.l} value={m.v} color={m.c}/>
                       ))}
@@ -1958,7 +1967,7 @@ export default function App(){
             </div>
             <div style={{background:"var(--card)",border:"1px solid var(--bdr)",borderRadius:".75rem",padding:"1rem",marginBottom:".75rem"}}>
               <div style={{fontFamily:"'Syne',sans-serif",fontWeight:700,fontSize:".8rem",color:"var(--tx2)",marginBottom:".65rem"}}>➕ Nova conta a receber</div>
-              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:".5rem",marginBottom:".5rem"}}>
+              <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))",gap:".5rem",marginBottom:".5rem"}}>
                 <div>
                   <div style={{fontSize:".68rem",color:"var(--sub)",textTransform:"uppercase",marginBottom:".3rem"}}>Cliente</div>
                   <select value={recForm.client_id} onChange={e=>{const c=clients.find(x=>x.id===e.target.value);setRecForm(f=>({...f,client_id:e.target.value,client_name:c?c.name:""}));}} style={IS}>
@@ -1971,7 +1980,7 @@ export default function App(){
                   <input type="date" value={recForm.due_date} onChange={e=>setRecForm(f=>({...f,due_date:e.target.value}))} style={IS}/>
                 </div>
               </div>
-              <div style={{display:"grid",gridTemplateColumns:"2fr 1fr",gap:".5rem",marginBottom:".65rem"}}>
+              <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(140px,1fr))",gap:".5rem",marginBottom:".65rem"}}>
                 <div>
                   <div style={{fontSize:".68rem",color:"var(--sub)",textTransform:"uppercase",marginBottom:".3rem"}}>Descrição *</div>
                   <input value={recForm.description||""} onChange={e=>setRecForm(f=>({...f,description:e.target.value}))} placeholder="Ex: Venda parcelada, fiado..." style={IS}/>
@@ -2060,7 +2069,8 @@ export default function App(){
           </div>
 
           {/* Cabeçalho colunas */}
-          <div style={{display:"grid",gridTemplateColumns:"1fr 80px 110px 80px",gap:".4rem",marginBottom:".35rem",padding:"0 .1rem"}}>
+          <div style={{overflowX:"auto",WebkitOverflowScrolling:"touch"}}>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 80px 110px 80px",gap:".4rem",marginBottom:".35rem",padding:"0 .1rem",minWidth:340}}>
             {["Produto","Qtd","Preço unit.",""].map(h=>(
               <div key={h} style={{fontSize:".62rem",color:"var(--sub)",textTransform:"uppercase",letterSpacing:".05em"}}>{h}</div>
             ))}
@@ -2167,7 +2177,7 @@ export default function App(){
 
           {/* Campos visíveis só quando flag ativa */}
           {cartDelivery&&(
-            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:".65rem"}}>
+            <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))",gap:".65rem"}}>
               {/* Taxa cobrada do cliente */}
               <div>
                 <div style={{fontSize:".65rem",color:"#10b981",textTransform:"uppercase",letterSpacing:".05em",marginBottom:".3rem",fontWeight:700,display:"flex",alignItems:"center",gap:".3rem"}}>
@@ -2225,7 +2235,7 @@ export default function App(){
                 ))}
               </div>
             </div>
-            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:".5rem",alignItems:"center"}}>
+            <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))",gap:".5rem",alignItems:"center"}}>
               <input type="number" min="0" step="0.01" value={cartDiscount} onChange={e=>setCartDiscount(e.target.value)} placeholder={cartDiscountType==="percent"?"ex: 10 (%)":"ex: 20,00 (R$)"} style={IS}/>
               <div style={{fontSize:".75rem",color:cartDiscountVal>0?"#4f5ef0":"var(--tx5)",fontWeight:cartDiscountVal>0?700:400}}>
                 {cartDiscountVal>0?"- "+fmt(cartDiscountVal)+" no total":"Sem desconto"}
@@ -2817,7 +2827,7 @@ export default function App(){
             {["Produto","Qtd","Custo/un",""].map(h=><div key={h} style={{fontSize:".62rem",color:"var(--sub)",textTransform:"uppercase"}}>{h}</div>)}
           </div>
           {orderItems.map((item,idx)=>(
-            <div key={item.key} style={{display:"grid",gridTemplateColumns:"1fr 70px 100px 36px",gap:".4rem",marginBottom:".4rem",alignItems:"center"}}>
+            <div key={item.key} style={{display:"grid",gridTemplateColumns:"1fr 60px 90px 32px",gap:".35rem",marginBottom:".4rem",alignItems:"center"}}>
               <select value={item.product_id} onChange={e=>orderSetProduct(item.key,e.target.value)} style={{...IS,fontSize:".8rem",padding:".45rem .6rem"}}>
                 <option value="">Selecione...</option>
                 {products.map(p=><option key={p.id} value={p.id}>{CATS[p.category]||"📋"} {p.name}</option>)}
@@ -2835,7 +2845,7 @@ export default function App(){
         {/* Pagamento */}
         <div style={{background:"var(--pill)",borderRadius:".5rem",padding:".75rem .85rem",marginBottom:"1rem"}}>
           <div style={{fontSize:".68rem",color:"var(--sub)",textTransform:"uppercase",letterSpacing:".06em",marginBottom:".6rem",fontWeight:700}}>💰 Pagamento</div>
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:".5rem",alignItems:"center",marginBottom:".5rem"}}>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))",gap:".5rem",alignItems:"center",marginBottom:".5rem"}}>
             <div>
               <div style={{fontSize:".65rem",color:"var(--sub)",marginBottom:".28rem"}}>Sinal / Entrada (%)</div>
               <div style={{display:"flex",alignItems:"center",gap:".35rem"}}>
@@ -2908,7 +2918,7 @@ export default function App(){
               }} style={{fontSize:".65rem",color:"#4f5ef0",background:"#4f5ef015",border:"1px solid #4f5ef030",borderRadius:".3rem",padding:".15rem .5rem",cursor:"pointer",fontFamily:"'DM Sans',sans-serif",fontWeight:600}}>Todos</button>
             </div>
 
-            <div style={{display:"grid",gap:".45rem"}}>
+            <div style={{display:"grid",gap:".45rem",maxHeight:"45vh",overflowY:"auto",paddingRight:".3rem"}}>
               {allItems.map((it,i)=>{
                 const isRec=it.received;
                 const ch=receiveChecked[i]||{checked:false,qty:it.qty};
