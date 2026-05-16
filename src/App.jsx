@@ -245,7 +245,7 @@ function LoginScreen({onLogin,dark}){
 }
 
 // ─── ANALYTICS ────────────────────────────────────────────────────────────────
-function Analytics({onClose,sales,cashTx,products,clients,dark}){
+function Analytics({onClose,sales,cashTx,products,clients,dark,receivables=[]}){
   const[range,setRange]=useState("30d");
   const[cf,setCf]=useState(""),ct=useState("");
   const[ct_,setCt]=ct;
@@ -320,6 +320,8 @@ function Analytics({onClose,sales,cashTx,products,clients,dark}){
         <KCard label="Ticket médio" value={fmt(ticket)} color="#4f5ef0"/>
         <KCard label="Valor estoque" value={fmt(stockVal)} color="#8b44f0" icon="stock"/>
         <KCard label="Clientes" value={clients.length} color="#10b981" icon="client"/>
+        <KCard label="A Receber" value={fmt(receivables.filter(r=>!r.paid).reduce((a,r)=>a+r.value,0))} sub={receivables.filter(r=>!r.paid).length+" pendente(s)"} color="#f59e0b" icon="dollar"/>
+        <KCard label="A Receber" value={fmt(receivables.filter(r=>!r.paid).reduce((a,r)=>a+r.value,0))} sub={receivables.filter(r=>!r.paid).length+" conta(s) pendente(s)"} color="#f59e0b" icon="dollar"/>
       </div>
 
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:".85rem",marginBottom:".85rem"}}>
@@ -384,19 +386,22 @@ function Analytics({onClose,sales,cashTx,products,clients,dark}){
             {l:"ROI (lucro/custo)",v:cost>0?fmtPct((profit/cost)*100):"—",c:profit>=0?"#10b981":"#f56565"},
             {l:"Margem líquida",v:fmtPct(margin),c:"#4f5ef0"},
             {l:"Markup empresa",v:fmtPct(markup),c:"#8b44f0"},
-            {l:"Break-even/dia",v:range==="30d"&&cost>0?fmt(cost/30):"—",c:"#f59e0b"},
+            {l:"A Receber (pendente)",v:fmt(clients.length>=0?receivables.filter(r=>!r.paid).reduce((a,r)=>a+r.value,0):0),c:"#f59e0b"},
+            {l:"Receita projetada",v:fmt(rev+receivables.filter(r=>!r.paid).reduce((a,r)=>a+r.value,0)),c:"#10b981"},
           ]},
           {title:"Estoque & Giro",color:"#f59e0b",icon:"pkg",rows:[
             {l:"Valor total estoque",v:fmt(stockVal),c:"#f59e0b"},
             {l:"Total unidades",v:fmtN(products.reduce((a,p)=>a+p.stock_qty,0))+" un",c:"var(--tx)"},
             {l:"Produtos cadastrados",v:products.length,c:"#4f5ef0"},
             {l:"Estoque zerado",v:products.filter(p=>p.stock_qty<=0).length+" item(s)",c:"#f56565"},
+            {l:"Vencendo em 30d",v:products.filter(p=>p.expiry&&Math.ceil((new Date(p.expiry)-new Date())/86400000)<=30).length+" produto(s)",c:"#f59e0b"},
           ]},
           {title:"Performance Vendas",color:"#10b981",icon:"sales",rows:[
             {l:"Total de vendas",v:fS.length,c:"#10b981"},
             {l:"Unidades vendidas",v:fmtN(units)+" un",c:"var(--tx)"},
             {l:"Ticket médio",v:fmt(ticket),c:"#4f5ef0"},
             {l:"Clientes ativos",v:clients.length,c:"#8b44f0"},
+            {l:"Parcelas a receber",v:fmtN(receivables.filter(r=>!r.paid&&r.description&&r.description.includes("Parcela")).length),c:"#8b44f0"},
           ]},
         ].map(block=>(
           <div key={block.title} style={{background:"var(--acard)",border:"1px solid var(--abdr)",borderRadius:".75rem",padding:"1rem"}}>
@@ -1110,71 +1115,58 @@ export default function App(){
               {lowStk.length>0&&<p style={{fontSize:".73rem",color:"#f59e0b"}}>🟡 Baixo: {lowStk.map(p=>`${p.name}(${p.stock_qty})`).join(", ")}</p>}
             </div>
           )}
-          {/* A Receber resumo */}
+          {/* Informativos — A Receber + Meta + Alertas */}
           {(()=>{
+            const now=new Date();
+            const monthStart=new Date(now.getFullYear(),now.getMonth(),1);
+            const monthRev=cashTx.filter(t=>t.type==="entrada"&&new Date(t.created_at)>=monthStart).reduce((a,t)=>a+t.value,0);
+            const goal=parseFloat(monthGoal)||0;
+            const pct=goal>0?Math.min((monthRev/goal)*100,100):0;
+            const barColor=pct>=100?"linear-gradient(90deg,#10b981,#059669)":pct>=70?"linear-gradient(90deg,#f59e0b,#d97706)":"linear-gradient(90deg,#4f5ef0,#8b44f0)";
             const pend=receivables.filter(r=>!r.paid);
             const pendVal=pend.reduce((a,r)=>a+r.value,0);
             const overdue=pend.filter(r=>r.due_date&&new Date(r.due_date)<new Date());
-            if(pend.length===0)return null;
-            return(
-              <div style={{background:"var(--card)",border:"1px solid #4f5ef030",borderRadius:".75rem",padding:".75rem 1rem",marginBottom:".75rem",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"space-between"}} onClick={()=>setTab("recebiveis")}>
-                <div>
-                  <div style={{fontWeight:700,fontSize:".8rem",color:"var(--tx)",display:"flex",alignItems:"center",gap:".35rem"}}>
-                    <Ic n="dollar" s={13}/>💰 A Receber
-                  </div>
-                  <div style={{fontSize:".67rem",color:"var(--tx5)",marginTop:".12rem"}}>{pend.length} conta{pend.length>1?"s":""} em aberto{overdue.length>0?" · "+overdue.length+" vencida"+(overdue.length>1?"s":""):""}</div>
-                </div>
-                <div style={{textAlign:"right"}}>
-                  <div style={{fontWeight:800,color:"#4f5ef0",fontFamily:"'Syne',sans-serif",fontSize:".95rem"}}>{fmt(pendVal)}</div>
-                  <div style={{fontSize:".65rem",color:"var(--tx5)"}}>pendente</div>
-                </div>
-              </div>
-            );
-          })()}
-
-          {/* Meta mensal */}
-          {(()=>{
-            const goal=parseFloat(monthGoal)||0;
-            const monthStart=new Date(new Date().getFullYear(),new Date().getMonth(),1);
-            const monthRev=cashTx.filter(t=>t.type==="entrada"&&new Date(t.created_at)>=monthStart).reduce((a,t)=>a+t.value,0);
-            const pct=goal>0?Math.min((monthRev/goal)*100,100):0;
-            const pctStr=fmtPct(pct);
-            const barColor=pct>=100?"linear-gradient(90deg,#10b981,#059669)":pct>=70?"linear-gradient(90deg,#f59e0b,#d97706)":"linear-gradient(90deg,#4f5ef0,#8b44f0)";
-            const overdue=receivables.filter(r=>!r.paid&&r.due_date&&new Date(r.due_date)<new Date());
-            const overdueVal=overdue.reduce((a,r)=>a+r.value,0);
             return(<>
-              <div style={{background:"var(--card)",border:"1px solid var(--bdr)",borderRadius:".75rem",padding:".9rem 1rem",marginBottom:".75rem"}}>
-                <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:".5rem"}}>
-                  <span style={{fontFamily:"'Syne',sans-serif",fontWeight:700,fontSize:".8rem",color:"var(--tx2)"}}>🎯 Meta Mensal</span>
-                  <div style={{display:"flex",alignItems:"center",gap:".5rem"}}>
-                    <span style={{fontSize:".75rem",color:"#10b981",fontWeight:700}}>{fmt(monthRev)}</span>
-                    <span style={{fontSize:".7rem",color:"var(--tx5)"}}>de</span>
-                    <input type="number" min="0" step="100" value={monthGoal} onChange={e=>setMonthGoal(e.target.value)} placeholder="R$ meta..." style={{width:105,background:"var(--inp)",border:"1px solid var(--bdr2)",borderRadius:".35rem .0rem .0rem .35rem",padding:".22rem .45rem",color:"var(--tx)",fontSize:".75rem",fontFamily:"'DM Sans',sans-serif",outline:"none"}}/>
-                    <button onClick={async()=>{
-                      try{
-                        await supabase.from("app_settings").upsert({key:"monthgoal",value:monthGoal,updated_at:nowISO(),updated_by:cu.display_name},{onConflict:"key"});
-                        toast$("🎯 Meta salva: "+fmt(parseFloat(monthGoal)||0));
-                      }catch(e){toast$("Erro ao salvar.","#f56565");}
-                    }} style={{padding:".22rem .6rem",borderRadius:".0rem .35rem .35rem .0rem",background:"linear-gradient(135deg,#4f5ef0,#8b44f0)",color:"#fff",border:"none",fontSize:".72rem",fontFamily:"'DM Sans',sans-serif",fontWeight:700,cursor:"pointer"}}>Salvar</button>
+              {/* Régua Meta Mensal */}
+              <div style={{background:"var(--card)",border:"1px solid var(--bdr)",borderRadius:".75rem",padding:".75rem 1rem",marginBottom:".65rem"}}>
+                <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:".38rem"}}>
+                  <span style={{fontSize:".75rem",fontWeight:700,color:"var(--tx2)",display:"flex",alignItems:"center",gap:".35rem"}}>🎯 Meta Mensal</span>
+                  <div style={{display:"flex",alignItems:"center",gap:".45rem"}}>
+                    <span style={{fontSize:".78rem",color:"#10b981",fontWeight:700,fontFamily:"'Syne',sans-serif"}}>{fmt(monthRev)}</span>
+                    {goal>0&&<><span style={{fontSize:".68rem",color:"var(--tx5)"}}>de</span><span style={{fontSize:".78rem",color:"var(--tx4)",fontWeight:600}}>{fmt(goal)}</span></>}
+                    {pct>=100&&<Badge color="#10b981" sm>🏆 Meta!</Badge>}
                   </div>
                 </div>
-                <div style={{height:7,background:"var(--bdr)",borderRadius:4}}>
-                  <div style={{height:"100%",width:pct+"%",background:barColor,borderRadius:4,transition:"width .6s"}}/>
+                <div style={{height:8,background:"var(--bdr)",borderRadius:4,overflow:"hidden"}}>
+                  <div style={{height:"100%",width:pct+"%",background:barColor,borderRadius:4,transition:"width .8s ease"}}/>
                 </div>
-                <div style={{display:"flex",justifyContent:"space-between",marginTop:".28rem",fontSize:".63rem",color:"var(--sub)"}}>
-                  <span>{pctStr} atingido</span>
-                  {goal>0&&<span style={{color:pct>=100?"#10b981":"var(--sub)"}}>faltam {fmt(Math.max(0,goal-monthRev))}</span>}
+                <div style={{display:"flex",justifyContent:"space-between",marginTop:".25rem",fontSize:".62rem",color:"var(--sub)"}}>
+                  <span>{fmtPct(pct)} atingido este mês</span>
+                  {goal>0&&pct<100&&<span>faltam {fmt(Math.max(0,goal-monthRev))}</span>}
+                  {goal===0&&<span style={{color:"var(--tx6)"}}>Configure a meta em Metas & Histórico →</span>}
                 </div>
               </div>
-              {overdue.length>0&&(
-                <div onClick={()=>setTab("recebiveis")} style={{background:"var(--card)",border:"1px solid #f5656540",borderRadius:".75rem",padding:".65rem 1rem",marginBottom:".75rem",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
-                  <div style={{display:"flex",alignItems:"center",gap:".5rem",color:"#f56565"}}>
-                    <Ic n="warn" s={14}/>
-                    <span style={{fontWeight:700,fontSize:".8rem"}}>{overdue.length} conta{overdue.length>1?"s":""} vencida{overdue.length>1?"s":""}</span>
+              {/* A Receber + Alertas */}
+              <div style={{display:"grid",gridTemplateColumns:pend.length>0?"1fr 1fr":"1fr",gap:".65rem",marginBottom:".65rem"}}>
+                {pend.length>0&&(
+                  <div onClick={()=>setTab("recebiveis")} style={{background:"var(--card)",border:"1px solid #4f5ef030",borderRadius:".75rem",padding:".65rem .9rem",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+                    <div>
+                      <div style={{fontSize:".72rem",fontWeight:700,color:"var(--tx)",display:"flex",alignItems:"center",gap:".3rem"}}><Ic n="dollar" s={12}/>A Receber</div>
+                      <div style={{fontSize:".63rem",color:"var(--tx5)",marginTop:".1rem"}}>{pend.length} conta{pend.length!==1?"s":""} em aberto</div>
+                    </div>
+                    <span style={{fontWeight:800,color:"#4f5ef0",fontFamily:"'Syne',sans-serif",fontSize:".9rem"}}>{fmt(pendVal)}</span>
                   </div>
-                  <span style={{fontWeight:700,color:"#f56565",fontFamily:"'Syne',sans-serif",fontSize:".88rem"}}>{fmt(overdueVal)}</span>
-                </div>
-              )}
+                )}
+                {overdue.length>0&&(
+                  <div onClick={()=>setTab("recebiveis")} style={{background:"var(--card)",border:"1px solid #f5656540",borderRadius:".75rem",padding:".65rem .9rem",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+                    <div>
+                      <div style={{fontSize:".72rem",fontWeight:700,color:"#f56565",display:"flex",alignItems:"center",gap:".3rem"}}><Ic n="warn" s={12}/>{overdue.length} Vencida{overdue.length!==1?"s":""}</div>
+                      <div style={{fontSize:".63rem",color:"var(--tx5)",marginTop:".1rem"}}>clique para ver</div>
+                    </div>
+                    <span style={{fontWeight:800,color:"#f56565",fontFamily:"'Syne',sans-serif",fontSize:".9rem"}}>{fmt(overdue.reduce((a,r)=>a+r.value,0))}</span>
+                  </div>
+                )}
+              </div>
             </>);
           })()}
 
@@ -1472,6 +1464,76 @@ export default function App(){
         </>)}
 
         {/* ══ USUÁRIOS ══ */}
+
+        {/* ══ A RECEBER ══ */}
+        {tab==="recebiveis"&&(
+          <div style={{animation:"fadeUp .4s ease"}}>
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:".75rem",flexWrap:"wrap",gap:".5rem"}}>
+              <h2 style={{fontFamily:"'Syne',sans-serif",fontWeight:800,fontSize:"1rem",color:"var(--tx)"}}>💰 Contas a Receber</h2>
+              <XBtn rows={receivables.map(r=>({Cliente:r.client_name||"—",Descrição:r.description,Valor:fmt(r.value),Vencimento:r.due_date||"—",Status:r.paid?"Recebido":"Pendente"}))} name="recebiveis-caixapro" sheet="A Receber"/>
+            </div>
+            <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:".6rem",marginBottom:".75rem"}}>
+              <KCard label="Em aberto" value={fmtN(receivables.filter(r=>!r.paid).length)} sub={fmt(receivables.filter(r=>!r.paid).reduce((a,r)=>a+r.value,0))} color="#4f5ef0"/>
+              <KCard label="Vencidas" value={fmtN(receivables.filter(r=>!r.paid&&r.due_date&&new Date(r.due_date)<new Date()).length)} sub={fmt(receivables.filter(r=>!r.paid&&r.due_date&&new Date(r.due_date)<new Date()).reduce((a,r)=>a+r.value,0))} color="#f56565"/>
+              <KCard label="Recebido total" value={fmt(receivables.filter(r=>r.paid).reduce((a,r)=>a+r.value,0))} color="#10b981"/>
+            </div>
+            <div style={{background:"var(--card)",border:"1px solid var(--bdr)",borderRadius:".75rem",padding:"1rem",marginBottom:".75rem"}}>
+              <div style={{fontFamily:"'Syne',sans-serif",fontWeight:700,fontSize:".8rem",color:"var(--tx2)",marginBottom:".65rem"}}>➕ Nova conta a receber</div>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:".5rem",marginBottom:".5rem"}}>
+                <div>
+                  <div style={{fontSize:".68rem",color:"var(--sub)",textTransform:"uppercase",marginBottom:".3rem"}}>Cliente</div>
+                  <select value={recForm.client_id} onChange={e=>{const c=clients.find(x=>x.id===e.target.value);setRecForm(f=>({...f,client_id:e.target.value,client_name:c?c.name:""}));}} style={IS}>
+                    <option value="">Selecione...</option>
+                    {clients.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <div style={{fontSize:".68rem",color:"var(--sub)",textTransform:"uppercase",marginBottom:".3rem"}}>Vencimento</div>
+                  <input type="date" value={recForm.due_date} onChange={e=>setRecForm(f=>({...f,due_date:e.target.value}))} style={IS}/>
+                </div>
+              </div>
+              <div style={{display:"grid",gridTemplateColumns:"2fr 1fr",gap:".5rem",marginBottom:".65rem"}}>
+                <div>
+                  <div style={{fontSize:".68rem",color:"var(--sub)",textTransform:"uppercase",marginBottom:".3rem"}}>Descrição *</div>
+                  <input value={recForm.description||""} onChange={e=>setRecForm(f=>({...f,description:e.target.value}))} placeholder="Ex: Venda parcelada, fiado..." style={IS}/>
+                </div>
+                <div>
+                  <div style={{fontSize:".68rem",color:"var(--sub)",textTransform:"uppercase",marginBottom:".3rem"}}>Valor (R$) *</div>
+                  <input type="number" min="0" step="0.01" value={recForm.value||""} onChange={e=>setRecForm(f=>({...f,value:e.target.value}))} placeholder="0,00" style={IS}/>
+                </div>
+              </div>
+              <Btn v="ok" onClick={addReceivable}><Ic n="save" s={13}/>Registrar</Btn>
+            </div>
+            <div style={{background:"var(--card)",border:"1px solid var(--bdr)",borderRadius:".75rem",overflow:"hidden"}}>
+              {receivables.length===0
+                ?<p style={{color:"var(--tx5)",textAlign:"center",padding:"2.5rem 0",fontSize:".8rem"}}>Nenhuma conta registrada. Use o formulário acima para registrar.</p>
+                :receivables.map(r=>{
+                  const ov=!r.paid&&r.due_date&&new Date(r.due_date)<new Date();
+                  const dv=r.due_date?Math.ceil((new Date(r.due_date+"T23:59:59")-new Date())/86400000):null;
+                  return(
+                    <div key={r.id} style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:".72rem 1rem",borderBottom:"1px solid var(--sep)",background:ov?"#f5656508":"transparent"}}>
+                      <div style={{flex:1,minWidth:0}}>
+                        <div style={{display:"flex",alignItems:"center",gap:".4rem",marginBottom:".15rem",flexWrap:"wrap"}}>
+                          <span style={{fontWeight:700,fontSize:".83rem",color:r.paid?"var(--tx5)":"var(--tx)",textDecoration:r.paid?"line-through":"none"}}>{r.description}</span>
+                          {r.paid&&<Badge color="#10b981" sm>✅ Recebido</Badge>}
+                          {ov&&<Badge color="#f56565" sm>⚠️ Vencido</Badge>}
+                          {!r.paid&&!ov&&dv!==null&&dv<=3&&<Badge color="#f59e0b" sm>{"⏰ Vence em "+dv+"d"}</Badge>}
+                        </div>
+                        <div style={{fontSize:".67rem",color:"var(--tx5)"}}>{r.client_name||"Sem cliente"}{r.due_date&&" · Vcto: "+new Date(r.due_date+"T00:00:00").toLocaleDateString("pt-BR")}{r.paid_date&&" · Pago: "+r.paid_date}</div>
+                      </div>
+                      <div style={{display:"flex",alignItems:"center",gap:".55rem",flexShrink:0,marginLeft:".75rem"}}>
+                        <span style={{fontWeight:700,fontFamily:"'Syne',sans-serif",color:r.paid?"#10b981":ov?"#f56565":"#f59e0b",fontSize:".9rem"}}>{fmt(r.value)}</span>
+                        {!r.paid&&<button onClick={()=>payReceivable(r.id)} style={{background:"#10b98115",border:"1px solid #10b98130",borderRadius:".4rem",padding:".28rem .6rem",color:"#10b981",fontSize:".72rem",fontFamily:"'DM Sans',sans-serif",fontWeight:600,cursor:"pointer"}}>✅ Recebido</button>}
+                        <button onClick={()=>deleteReceivable(r.id)} style={{background:"none",border:"none",color:"var(--tx6)",padding:".2rem",cursor:"pointer"}}><Ic n="trash" s={13}/></button>
+                      </div>
+                    </div>
+                  );
+                })
+              }
+            </div>
+          </div>
+        )}
+
         {tab==="usuarios"&&isAdmin&&(<>
           <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:".75rem"}}>
             <h2 style={{fontFamily:"'Syne',sans-serif",fontWeight:800,fontSize:"1rem",color:"var(--tx)"}}>Usuários</h2>
@@ -1501,7 +1563,7 @@ export default function App(){
     </div>
 
     {/* ══ ANALYTICS ══ */}
-    {showA&&<Analytics onClose={()=>setShowA(false)} sales={sales} cashTx={cashTx} products={products} clients={clients} dark={dark}/>}
+    {showA&&<Analytics onClose={()=>setShowA(false)} sales={sales} cashTx={cashTx} products={products} clients={clients} dark={dark} receivables={receivables}/>}
 
     {/* ══ MODAIS ══ */}
 
@@ -1999,72 +2061,6 @@ export default function App(){
       </div>
     </Modal>)}
 
-    {/* ══ TAB RECEBÍVEIS ══ */}
-    {tab==="recebiveis"&&(
-      <div style={{animation:"fadeUp .4s ease"}}>
-        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:".75rem",flexWrap:"wrap",gap:".5rem"}}>
-          <h2 style={{fontFamily:"'Syne',sans-serif",fontWeight:800,fontSize:"1rem",color:"var(--tx)"}}>💰 Contas a Receber</h2>
-        </div>
-        <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:".6rem",marginBottom:".75rem"}}>
-          <KCard label="Em aberto" value={fmtN(receivables.filter(r=>!r.paid).length)} sub={fmt(receivables.filter(r=>!r.paid).reduce((a,r)=>a+r.value,0))} color="#4f5ef0"/>
-          <KCard label="Vencidas" value={fmtN(receivables.filter(r=>!r.paid&&r.due_date&&new Date(r.due_date)<new Date()).length)} color="#f56565"/>
-          <KCard label="Recebido hoje" value={fmt(receivables.filter(r=>r.paid&&r.paid_date===today()).reduce((a,r)=>a+r.value,0))} color="#10b981"/>
-        </div>
-        <div style={{background:"var(--card)",border:"1px solid var(--bdr)",borderRadius:".75rem",padding:"1rem",marginBottom:".75rem"}}>
-          <div style={{fontFamily:"'Syne',sans-serif",fontWeight:700,fontSize:".8rem",color:"var(--tx2)",marginBottom:".65rem"}}>➕ Nova conta a receber</div>
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:".5rem",marginBottom:".5rem"}}>
-            <div>
-              <div style={{fontSize:".68rem",color:"var(--sub)",textTransform:"uppercase",marginBottom:".3rem"}}>Cliente</div>
-              <select value={recForm.client_id} onChange={e=>{const c=clients.find(x=>x.id===e.target.value);setRecForm(f=>({...f,client_id:e.target.value,client_name:c?c.name:""}));}} style={IS}>
-                <option value="">Selecione...</option>
-                {clients.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}
-              </select>
-            </div>
-            <div>
-              <div style={{fontSize:".68rem",color:"var(--sub)",textTransform:"uppercase",marginBottom:".3rem"}}>Vencimento</div>
-              <input type="date" value={recForm.due_date} onChange={e=>setRecForm(f=>({...f,due_date:e.target.value}))} style={IS}/>
-            </div>
-          </div>
-          <div style={{display:"grid",gridTemplateColumns:"2fr 1fr",gap:".5rem",marginBottom:".65rem"}}>
-            <div>
-              <div style={{fontSize:".68rem",color:"var(--sub)",textTransform:"uppercase",marginBottom:".3rem"}}>Descrição *</div>
-              <input value={recForm.description||""} onChange={e=>setRecForm(f=>({...f,description:e.target.value}))} placeholder="Ex: Venda parcelada, fiado..." style={IS}/>
-            </div>
-            <div>
-              <div style={{fontSize:".68rem",color:"var(--sub)",textTransform:"uppercase",marginBottom:".3rem"}}>Valor (R$) *</div>
-              <input type="number" min="0" step="0.01" value={recForm.value||""} onChange={e=>setRecForm(f=>({...f,value:e.target.value}))} placeholder="0,00" style={IS}/>
-            </div>
-          </div>
-          <Btn v="ok" onClick={addReceivable}><Ic n="save" s={13}/>Registrar</Btn>
-        </div>
-        <div style={{background:"var(--card)",border:"1px solid var(--bdr)",borderRadius:".75rem"}}>
-          {receivables.length===0
-            ?<p style={{color:"var(--tx5)",textAlign:"center",padding:"2.5rem 0",fontSize:".8rem"}}>Nenhuma conta registrada.</p>
-            :receivables.map(r=>{
-              const ov=!r.paid&&r.due_date&&new Date(r.due_date)<new Date();
-              return(
-                <div key={r.id} style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:".72rem 1rem",borderBottom:"1px solid var(--sep)",background:ov?"#f5656506":"transparent"}}>
-                  <div style={{flex:1,minWidth:0}}>
-                    <div style={{display:"flex",alignItems:"center",gap:".4rem",marginBottom:".15rem"}}>
-                      <span style={{fontWeight:700,fontSize:".83rem",color:r.paid?"var(--tx5)":"var(--tx)",textDecoration:r.paid?"line-through":"none"}}>{r.description}</span>
-                      {r.paid&&<Badge color="#10b981" sm>✅ Recebido</Badge>}
-                      {ov&&<Badge color="#f56565" sm>⚠️ Vencido</Badge>}
-                    </div>
-                    <div style={{fontSize:".67rem",color:"var(--tx5)"}}>{r.client_name||"Sem cliente"}{r.due_date&&" · Vcto: "+new Date(r.due_date+"T00:00:00").toLocaleDateString("pt-BR")}{r.paid_date&&" · Pago: "+r.paid_date}</div>
-                  </div>
-                  <div style={{display:"flex",alignItems:"center",gap:".55rem",flexShrink:0,marginLeft:".75rem"}}>
-                    <span style={{fontWeight:700,fontFamily:"'Syne',sans-serif",color:r.paid?"#10b981":"#f59e0b",fontSize:".9rem"}}>{fmt(r.value)}</span>
-                    {!r.paid&&<button onClick={()=>payReceivable(r.id)} style={{background:"#10b98115",border:"1px solid #10b98130",borderRadius:".4rem",padding:".28rem .6rem",color:"#10b981",fontSize:".72rem",fontFamily:"'DM Sans',sans-serif",fontWeight:600,cursor:"pointer"}}>✅ Recebido</button>}
-                    <button onClick={()=>deleteReceivable(r.id)} style={{background:"none",border:"none",color:"var(--tx6)",padding:".2rem",cursor:"pointer"}}><Ic n="trash" s={13}/></button>
-                  </div>
-                </div>
-              );
-            })
-          }
-        </div>
-      </div>
-    )}
-
     {/* ══ COMPROVANTE ══ */}
     {showReceipt&&(
       <Modal title="Comprovante de Venda" onClose={()=>setShowReceipt(null)} icon="pdf" wide>
@@ -2264,7 +2260,7 @@ export default function App(){
         const goal=monthlyGoals[key]||0;
         const monthStart=new Date(goalYear,mi,1);
         const monthEnd=new Date(goalYear,mi+1,0,23,59,59);
-        const real=cashTx.filter(t=>t.type==="entrada"&&new Date(t.created_at)>=monthStart&&new Date(t.created_at)<=monthEnd).reduce((a,t)=>a+t.value,0);
+        const real=sales.filter(s=>{const sd=new Date(s.created_at);return sd>=monthStart&&sd<=monthEnd;}).reduce((a,s)=>a+s.total_price,0);
         const pct=goal>0?Math.min((real/goal)*100,100):0;
         const isCurrent=now.getFullYear()===goalYear&&now.getMonth()===mi;
         return{key,mName,mi,goal,real,pct,isCurrent};
@@ -2307,7 +2303,7 @@ export default function App(){
                     <div style={{position:"relative",display:"flex",alignItems:"center"}}>
                       <input type="number" min="0" step="100" value={r.goal||""} onChange={e=>saveMonthlyGoal(r.key,e.target.value)} placeholder="meta..." style={{width:100,background:"var(--inp)",border:"1px solid var(--bdr2)",borderRadius:".35rem",padding:".22rem .45rem",color:"var(--tx)",fontSize:".75rem",fontFamily:"'DM Sans',sans-serif",outline:"none",textAlign:"right"}}/>
                     </div>
-                    <span style={{fontSize:".72rem",fontWeight:700,color:r.pct>=100?"#10b981":r.pct>=70?"#f59e0b":"var(--tx5)",minWidth:42,textAlign:"right"}}>{r.goal>0?fmtPct(r.pct):"—"}</span>
+                    <span style={{fontSize:".72rem",fontWeight:700,color:r.pct>=100?"#10b981":r.pct>=70?"#f59e0b":r.isPast&&r.goal>0?"#f56565":"var(--tx5)",minWidth:42,textAlign:"right"}}>{r.goal>0?fmtPct(r.pct):"—"}{r.pct>=100?" 🏆":r.isPast&&r.goal>0&&r.pct<70?" ❌":""}</span>
                   </div>
                 </div>
                 <div style={{height:6,background:"var(--bdr)",borderRadius:3}}>
