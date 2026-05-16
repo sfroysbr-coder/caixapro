@@ -693,6 +693,7 @@ export default function App(){
             value:parcelaNet,
             due_date:dueDate.toISOString().slice(0,10),
             paid:false,
+            sale_id:batchId,   // vincula ao batch para reversão
             added_by:cu.display_name,
             created_at:nowISO(),
           });
@@ -914,19 +915,34 @@ export default function App(){
         await supabase.from("sales").delete().eq("id",id);
       }
 
-      // 5. Excluir TODOS os lançamentos de caixa vinculados ao batch
-      // (Entrada de receita + Saída de custo de cortesia + Frete)
+      // 5. Excluir lançamentos de caixa vinculados ao batch
       await supabase.from("cash_transactions").delete().eq("sale_id",batchKey);
 
-      // 6. Feedback detalhado
+      // 6. Reverter parcelas de A Receber vinculadas ao batch
+      const{data:recsToDelete}=await supabase
+        .from("receivables")
+        .select("id,paid,value")
+        .eq("sale_id",batchKey);
+
+      let parcelasRevertidas=0;
+      let parcelasPagas=0;
+      if(recsToDelete&&recsToDelete.length>0){
+        parcelasRevertidas=recsToDelete.length;
+        parcelasPagas=recsToDelete.filter(r=>r.paid).length;
+        await supabase.from("receivables").delete().eq("sale_id",batchKey);
+        await loadReceivables();
+      }
+
+      // 7. Feedback completo
       const nItens=batchSales.length;
-      const totalRevertido=batchSales.reduce((a,s)=>a+s.total_price,0);
-      toast$(
-        nItens>1
-          ? `🔄 Venda excluída · ${nItens} itens revertidos · Estoque e caixa restaurados`
-          : `🔄 Venda excluída · Estoque e caixa revertidos`,
-        "#f59e0b"
-      );
+      let msg="🔄 Venda excluída · Estoque revertido";
+      if(parcelasRevertidas>0){
+        msg+=" · "+parcelasRevertidas+" parcela"+(parcelasRevertidas>1?"s":"")+" removida"+(parcelasRevertidas>1?"s":"")+" de A Receber";
+        if(parcelasPagas>0){
+          msg+=" (⚠️ "+parcelasPagas+" já havia"+(parcelasPagas>1?"m":"")+" sido recebida"+(parcelasPagas>1?"s":"")+")";
+        }
+      }
+      toast$(msg,"#f59e0b");
     }catch(ex){toast$("Erro ao excluir: "+ex.message,"#f56565");}
   };
 
@@ -1121,31 +1137,37 @@ export default function App(){
             const monthStart=new Date(now.getFullYear(),now.getMonth(),1);
             const monthRev=cashTx.filter(t=>t.type==="entrada"&&new Date(t.created_at)>=monthStart).reduce((a,t)=>a+t.value,0);
             const goal=parseFloat(monthGoal)||0;
-            const pct=goal>0?Math.min((monthRev/goal)*100,100):0;
-            const barColor=pct>=100?"linear-gradient(90deg,#10b981,#059669)":pct>=70?"linear-gradient(90deg,#f59e0b,#d97706)":"linear-gradient(90deg,#4f5ef0,#8b44f0)";
             const pend=receivables.filter(r=>!r.paid);
             const pendVal=pend.reduce((a,r)=>a+r.value,0);
             const overdue=pend.filter(r=>r.due_date&&new Date(r.due_date)<new Date());
             return(<>
-              {/* Régua Meta Mensal */}
-              <div style={{background:"var(--card)",border:"1px solid var(--bdr)",borderRadius:".75rem",padding:".75rem 1rem",marginBottom:".65rem"}}>
-                <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:".38rem"}}>
-                  <span style={{fontSize:".75rem",fontWeight:700,color:"var(--tx2)",display:"flex",alignItems:"center",gap:".35rem"}}>🎯 Meta Mensal</span>
-                  <div style={{display:"flex",alignItems:"center",gap:".45rem"}}>
-                    <span style={{fontSize:".78rem",color:"#10b981",fontWeight:700,fontFamily:"'Syne',sans-serif"}}>{fmt(monthRev)}</span>
-                    {goal>0&&<><span style={{fontSize:".68rem",color:"var(--tx5)"}}>de</span><span style={{fontSize:".78rem",color:"var(--tx4)",fontWeight:600}}>{fmt(goal)}</span></>}
-                    {pct>=100&&<Badge color="#10b981" sm>🏆 Meta!</Badge>}
+              {/* Meta Mensal — espelho do Goals modal, mês vigente */}
+              {(()=>{
+                const MONTHS_ABR=["Jan","Fev","Mar","Abr","Mai","Jun","Jul","Ago","Set","Out","Nov","Dez"];
+                const mName=MONTHS_ABR[now.getMonth()];
+                const key=now.getFullYear()+"-"+(now.getMonth()+1).toString().padStart(2,"0");
+                const mGoal=monthlyGoals[key]||parseFloat(monthGoal)||0;
+                const mReal=sales.filter(s=>{const d=new Date(s.created_at);return d>=monthStart&&d<=new Date(now.getFullYear(),now.getMonth()+1,0,23,59,59);}).reduce((a,s)=>a+s.total_price,0);
+                const mPct=mGoal>0?Math.min((mReal/mGoal)*100,100):0;
+                return(
+                  <div style={{background:"linear-gradient(135deg,#4f5ef010,#10b98108)",border:"1px solid #4f5ef040",borderRadius:".65rem",padding:".7rem .85rem",marginBottom:".65rem"}}>
+                    <div style={{display:"flex",alignItems:"center",gap:".75rem",marginBottom:".35rem"}}>
+                      <span style={{fontWeight:700,fontSize:".82rem",color:"#4f5ef0",minWidth:30}}>{mName}</span>
+                      <span style={{fontSize:".6rem",background:"#4f5ef020",color:"#4f5ef0",borderRadius:"99px",padding:".1rem .4rem",fontWeight:700}}>atual</span>
+                      <div style={{flex:1}}/>
+                      <div style={{display:"flex",alignItems:"center",gap:".4rem"}}>
+                        <span style={{fontSize:".75rem",color:mReal>=mGoal&&mGoal>0?"#10b981":"var(--tx3)",fontWeight:600}}>{fmt(mReal)}</span>
+                        <span style={{fontSize:".68rem",color:"var(--tx5)"}}>de</span>
+                        <span style={{fontSize:".78rem",color:"var(--tx4)",fontWeight:600,fontFamily:"'Syne',sans-serif"}}>{mGoal>0?fmt(mGoal):"—"}</span>
+                        <span style={{fontSize:".72rem",fontWeight:700,color:mPct>=100?"#10b981":mPct>=70?"#f59e0b":"var(--tx5)",minWidth:42,textAlign:"right"}}>{mGoal>0?fmtPct(mPct):"—"}{mPct>=100?" 🏆":""}</span>
+                      </div>
+                    </div>
+                    <div style={{height:6,background:"var(--bdr)",borderRadius:3}}>
+                      <div style={{height:"100%",width:mPct+"%",background:mPct>=100?"linear-gradient(90deg,#10b981,#059669)":mPct>=70?"linear-gradient(90deg,#f59e0b,#d97706)":"linear-gradient(90deg,#4f5ef0,#8b44f0)",borderRadius:3,transition:"width .5s"}}/>
+                    </div>
                   </div>
-                </div>
-                <div style={{height:8,background:"var(--bdr)",borderRadius:4,overflow:"hidden"}}>
-                  <div style={{height:"100%",width:pct+"%",background:barColor,borderRadius:4,transition:"width .8s ease"}}/>
-                </div>
-                <div style={{display:"flex",justifyContent:"space-between",marginTop:".25rem",fontSize:".62rem",color:"var(--sub)"}}>
-                  <span>{fmtPct(pct)} atingido este mês</span>
-                  {goal>0&&pct<100&&<span>faltam {fmt(Math.max(0,goal-monthRev))}</span>}
-                  {goal===0&&<span style={{color:"var(--tx6)"}}>Configure a meta em Metas & Histórico →</span>}
-                </div>
-              </div>
+                );
+              })()}
               {/* A Receber + Alertas */}
               <div style={{display:"grid",gridTemplateColumns:pend.length>0?"1fr 1fr":"1fr",gap:".65rem",marginBottom:".65rem"}}>
                 {pend.length>0&&(
