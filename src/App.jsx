@@ -170,6 +170,128 @@ const R2=({children,gap=".65rem"})=>{const k=Array.isArray(children)?children.fi
 
 // Botões Export
 const XBtn=({rows,name,sheet})=><button onClick={()=>exportXLS(rows,name,sheet)} style={{display:"inline-flex",alignItems:"center",gap:".3rem",padding:".32rem .65rem",borderRadius:".4rem",background:"#14532d",color:"#4ade80",border:"1px solid #166834",fontSize:".72rem",fontFamily:"'DM Sans',sans-serif",fontWeight:600}}><Ic n="xls" s={11}/>Excel</button>;
+const exportOrderPDF=(order)=>{
+  if(!window.jspdf){alert("Aguarde carregar a página.");return;}
+  const{jsPDF}=window.jspdf;
+  const items=JSON.parse(order.items||"[]");
+  const doc=new jsPDF({orientation:"portrait",unit:"mm",format:"a4"});
+  const W=210,margin=14;
+  const fmt2=v=>new Intl.NumberFormat("pt-BR",{style:"currency",currency:"BRL"}).format(v||0);
+
+  // ── Status atual espelhado ──
+  const statusLabel=order.status==="recebido"?"RECEBIDO":order.status==="perdido"?"PERDIDO":order.status==="parcial"?"PARCIAL (em andamento)":"PENDENTE";
+  const statusColor=order.status==="recebido"?[0,150,100]:order.status==="perdido"?[200,60,60]:order.status==="parcial"?[8,145,178]:[200,140,0];
+
+  // ── Cabeçalho ──
+  doc.setFillColor(13,15,26);
+  doc.rect(0,0,W,22,"F");
+  doc.setTextColor(232,234,246);
+  doc.setFontSize(14);doc.setFont("helvetica","bold");
+  doc.text("CaixaPro · Tirzepatida",margin,10);
+  doc.setFontSize(9);doc.setFont("helvetica","normal");doc.setTextColor(160,160,200);
+  doc.text("Pedido de Compra",margin,16);
+  doc.text(new Date().toLocaleString("pt-BR"),W-margin,16,{align:"right"});
+
+  // ── Badge de status ──
+  doc.setFillColor(...statusColor);
+  doc.roundedRect(W-margin-50,26,50,10,2,2,"F");
+  doc.setTextColor(255,255,255);
+  doc.setFontSize(8);doc.setFont("helvetica","bold");
+  doc.text(statusLabel,W-margin-25,32,{align:"center"});
+
+  // ── Info do pedido ──
+  doc.setFontSize(11);doc.setFont("helvetica","bold");doc.setTextColor(40,40,70);
+  doc.text("PEDIDO #"+order.id.slice(0,8).toUpperCase(),margin,33);
+  doc.setFontSize(9);doc.setFont("helvetica","normal");
+  const infoRows=[
+    ["Fornecedor:",order.supplier_name||"—"],
+    ["Data do pedido:",order.order_date||"—"],
+    ["Recebimento:",order.received_date||"Aguardando"],
+  ];
+  let y=42;
+  infoRows.forEach(([l,v])=>{
+    doc.setFont("helvetica","bold");doc.setTextColor(100,100,140);doc.text(l,margin,y);
+    doc.setFont("helvetica","normal");doc.setTextColor(40,40,70);doc.text(v,55,y);
+    y+=7;
+  });
+  if(order.notes){
+    doc.setFont("helvetica","italic");doc.setTextColor(120,120,160);
+    doc.text("Obs: "+order.notes,margin,y);y+=8;
+  }
+
+  // ── Tabela de itens COM STATUS DE RECEBIMENTO ──
+  y+=3;
+  doc.setFontSize(10);doc.setFont("helvetica","bold");doc.setTextColor(79,94,240);
+  doc.text("ITENS DO PEDIDO",margin,y);y+=4;
+  doc.autoTable({
+    head:[["Status","Produto","Un","Qtd ped.","Qtd rec.","Custo/un","Total"]],
+    body:items.map(i=>[
+      i.received?"Recebido":"Pendente",
+      i.product_name,
+      i.unit||"un",
+      String(i.qty),
+      i.received?String(i.received_qty||i.qty):"—",
+      fmt2(i.unit_cost),
+      fmt2(i.total),
+    ]),
+    startY:y,
+    styles:{fontSize:8,cellPadding:2.5,textColor:[40,40,70]},
+    headStyles:{fillColor:[79,94,240],textColor:[255,255,255],fontStyle:"bold"},
+    alternateRowStyles:{fillColor:[248,249,255]},
+    columnStyles:{
+      0:{halign:"center",cellWidth:22,fontStyle:"bold"},
+      3:{halign:"center"},4:{halign:"center"},
+      5:{halign:"right"},6:{halign:"right"},
+    },
+    didParseCell:(data)=>{
+      if(data.column.index===0&&data.section==="body"){
+        data.cell.styles.textColor=data.cell.raw==="Recebido"?[0,150,100]:[200,140,0];
+      }
+    },
+    margin:{left:margin,right:margin},
+  });
+  y=doc.lastAutoTable.finalY+8;
+
+  // ── Resumo financeiro ATUALIZADO ──
+  const totalPaid=(order.initial_value||0)+(order.remaining_paid||0);
+  const stillOwed=Math.max(0,(order.total_value||0)-totalPaid);
+  doc.setFontSize(10);doc.setFont("helvetica","bold");doc.setTextColor(79,94,240);
+  doc.text("RESUMO FINANCEIRO",margin,y);y+=4;
+  doc.setFillColor(245,247,255);
+  doc.roundedRect(margin,y-2,W-margin*2,48,2,2,"F");
+  const finRows=[
+    ["Total do pedido:",            fmt2(order.total_value),           [40,40,70]],
+    ["Sinal pago ("+order.initial_pct+"%):", fmt2(order.initial_value),[200,140,0]],
+    ["Pagamentos no recebimento:",  fmt2(order.remaining_paid||0),     [79,94,240]],
+    ["Total pago até agora:",       fmt2(totalPaid),                   [0,150,100]],
+    ["Saldo a pagar:",              fmt2(stillOwed),                   stillOwed>0?[200,60,60]:[0,150,100]],
+  ];
+  finRows.forEach(([l,v,color])=>{
+    doc.setFont("helvetica","normal");doc.setFontSize(9);doc.setTextColor(80,80,120);
+    doc.text(l,margin+4,y+5);
+    doc.setFont("helvetica","bold");doc.setFontSize(9);doc.setTextColor(...color);
+    doc.text(v,W-margin-4,y+5,{align:"right"});
+    y+=9;
+  });
+
+  // ── Progresso itens recebidos ──
+  y+=6;
+  const recCount=items.filter(i=>i.received).length;
+  const totalCount=items.length;
+  const pct=totalCount>0?Math.round((recCount/totalCount)*100):0;
+  doc.setFontSize(9);doc.setFont("helvetica","bold");doc.setTextColor(80,80,120);
+  doc.text("Progresso do recebimento: "+recCount+"/"+totalCount+" item(s) ("+pct+"%)",margin,y);y+=5;
+  doc.setFillColor(220,220,240);doc.rect(margin,y,W-margin*2,4,"F");
+  doc.setFillColor(...statusColor);doc.rect(margin,y,(W-margin*2)*(pct/100),4,"F");
+  y+=12;
+
+  // ── Rodapé ──
+  doc.setFontSize(7.5);doc.setFont("helvetica","normal");doc.setTextColor(180,180,200);
+  doc.line(margin,282,W-margin,282);
+  doc.text("CaixaPro · Gestão Tirzepatida · Documento gerado em "+new Date().toLocaleString("pt-BR"),W/2,287,{align:"center"});
+  doc.save("pedido-"+order.id.slice(0,8).toUpperCase()+"-"+order.status.toUpperCase()+".pdf");
+};
+
 const PBtn=({cols,rows,name,title})=><button onClick={()=>exportPDF(cols,rows,name,title)} style={{display:"inline-flex",alignItems:"center",gap:".3rem",padding:".32rem .65rem",borderRadius:".4rem",background:"#450a0a",color:"#f87171",border:"1px solid #7f1d1d",fontSize:".72rem",fontFamily:"'DM Sans',sans-serif",fontWeight:600}}><Ic n="pdf" s={11}/>PDF</button>;
 
 // Sparkline
@@ -495,6 +617,8 @@ export default function App(){
   const[orderPct,setOrderPct]=useState("50");
   const[orderNotes,setOrderNotes]=useState("");
   const[receiveExtra,setReceiveExtra]=useState(""); // extra payment on receipt
+  const[receiveChecked,setReceiveChecked]=useState({}); // {itemIndex: {checked, qty}}
+  const[receivePayment,setReceivePayment]=useState(""); // payment for selected items
   const[cartDiscount,setCartDiscount]=useState("");
   const[cartParcelas,setCartParcelas]=useState(2);
   const[cartCardBrand,setCartCardBrand]=useState("Visa");
@@ -945,39 +1069,57 @@ export default function App(){
     }catch(ex){toast$("Erro: "+ex.message,"#f56565");}
   };
 
-  const confirmReceive=async(order,extraPayment)=>{
-    const items=JSON.parse(order.items||"[]");
-    const extra=parseFloat(extraPayment)||0;
+  const confirmReceive=async(order,checkedItems,payment)=>{
+    // checkedItems: [{index, qty, item}] — itens selecionados com qtd a receber
+    if(!checkedItems||checkedItems.length===0){
+      toast$("Selecione pelo menos 1 produto para receber.","#f56565");return;
+    }
+    const payVal=parseFloat(payment)||0;
+    const allItems=JSON.parse(order.items||"[]");
     try{
-      // 1. Atualizar status do pedido
-      await supabase.from("orders").update({
-        status:"recebido",
-        received_date:today(),
-        remaining_paid:extra,
-      }).eq("id",order.id);
-      // 2. Adicionar estoque de cada produto
-      for(const item of items){
+      // 1. Dar entrada no estoque de cada item selecionado
+      const receivedNames=[];
+      for(const {index,qty,item} of checkedItems){
         const prod=products.find(p=>p.id===item.product_id||p.name===item.product_name);
-        if(prod){
-          await supabase.from("products").update({stock_qty:prod.stock_qty+item.qty}).eq("id",prod.id);
+        if(prod&&qty>0){
+          await supabase.from("products").update({stock_qty:prod.stock_qty+qty}).eq("id",prod.id);
+          receivedNames.push(item.product_name+" ("+qty+")");
         }
+        // Marcar item como recebido no JSON
+        allItems[index]={...allItems[index],received:true,received_qty:qty,received_date:today()};
       }
-      // 3. Lançar pagamento restante no caixa
-      if(extra>0){
+      // 2. Verificar se TODOS os itens foram recebidos
+      const allReceived=allItems.every(i=>i.received);
+      const newStatus=allReceived?"recebido":"parcial";
+      // 3. Atualizar pedido
+      const prevPaid=order.remaining_paid||0;
+      await supabase.from("orders").update({
+        status:newStatus,
+        received_date:allReceived?today():(order.received_date||null),
+        remaining_paid:prevPaid+payVal,
+        items:JSON.stringify(allItems),
+      }).eq("id",order.id);
+      // 4. Lançar pagamento no caixa (se houver)
+      if(payVal>0){
         await supabase.from("cash_transactions").insert([{
           id:uid(),
-          description:"Pagamento Restante Pedido "+order.id.slice(0,8).toUpperCase()+" · "+order.supplier_name,
-          value:extra,
+          description:"Pgto Pedido "+order.id.slice(0,8).toUpperCase()+" · "+order.supplier_name+" · "+receivedNames.join(", "),
+          value:payVal,
           type:"saida",
           category:"Pedido Compra",
           sale_id:order.id,
-          product_name:items.map(i=>i.product_name).join(", "),
+          product_name:receivedNames.join(", "),
           added_by:cu.display_name,
           date:today(),
         }]);
       }
-      toast$("✅ Pedido recebido! Estoque atualizado.");
+      const msg=allReceived
+        ?"✅ Pedido totalmente recebido! Estoque e caixa atualizados."
+        :"✅ "+checkedItems.length+" produto(s) recebido(s)! Pedido parcialmente concluído.";
+      toast$(msg);
       setShowReceiveModal(null);
+      setReceiveChecked({});
+      setReceivePayment("");
     }catch(ex){toast$("Erro: "+ex.message,"#f56565");}
   };
 
@@ -995,7 +1137,7 @@ export default function App(){
     const items=JSON.parse(order.items||"[]");
     try{
       // 1. Se recebido: reverter estoque
-      if(order.status==="recebido"){
+      if(order.status==="recebido"||order.status==="parcial"){
         for(const item of items){
           const prod=products.find(p=>p.id===item.product_id||p.name===item.product_name);
           if(prod){
@@ -1707,7 +1849,7 @@ export default function App(){
                </div>
               :orders.map(order=>{
                 const items=JSON.parse(order.items||"[]");
-                const statusColor=order.status==="recebido"?"#10b981":order.status==="perdido"?"#f56565":order.status==="cancelado"?"#666a88":"#f59e0b";
+                const statusColor=order.status==="recebido"?"#10b981":order.status==="perdido"?"#f56565":order.status==="parcial"?"#0891b2":order.status==="cancelado"?"#666a88":"#f59e0b";
                 const statusLabel=order.status==="recebido"?"✅ Recebido":order.status==="cancelado"?"❌ Cancelado":order.status==="perdido"?"💀 Perdido":"🟡 Pendente";
                 const pctPaid=order.total_value>0?((order.initial_value+(order.remaining_paid||0))/order.total_value)*100:0;
                 return(
@@ -1726,8 +1868,16 @@ export default function App(){
                         {order.notes&&<div style={{fontSize:".68rem",color:"var(--sub)"}}>📝 {order.notes}</div>}
                       </div>
                       <div style={{display:"flex",gap:".3rem",flexShrink:0,marginLeft:".75rem"}}>
+                        <button onClick={()=>exportOrderPDF(order)} title="Gerar PDF do pedido" style={{background:"#450a0a",border:"1px solid #7f1d1d",borderRadius:".4rem",padding:".28rem .5rem",color:"#f87171",display:"flex",alignItems:"center",cursor:"pointer"}}><Ic n="pdf" s={13}/></button>
                         {order.status==="pendente"&&(
-                          <button onClick={()=>{setReceiveExtra(String(order.remaining_value));setShowReceiveModal(order);}} style={{background:"#10b98115",border:"1px solid #10b98130",borderRadius:".45rem",padding:".32rem .65rem",color:"#10b981",fontSize:".73rem",fontFamily:"'DM Sans',sans-serif",fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}}>✅ Receber</button>
+                          <button onClick={()=>{
+                            const items=JSON.parse(order.items||"[]");
+                            const initChecked={};
+                            items.forEach((it,i)=>{if(!it.received)initChecked[i]={checked:false,qty:it.qty};});
+                            setReceiveChecked(initChecked);
+                            setReceivePayment("");
+                            setShowReceiveModal(order);
+                          }} style={{background:"#10b98115",border:"1px solid #10b98130",borderRadius:".45rem",padding:".32rem .65rem",color:"#10b981",fontSize:".73rem",fontFamily:"'DM Sans',sans-serif",fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}}>✅ Receber</button>
                         )}
                         {order.status==="pendente"&&isAdmin&&(
                           <button onClick={()=>markOrderLost(order)} title="Marcar como perdido (sinal não recuperado)" style={{background:"#1e1010",border:"1px solid #3a1515",borderRadius:".4rem",padding:".28rem .55rem",color:"#f59e0b",fontSize:".7rem",fontFamily:"'DM Sans',sans-serif",fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}}>💀 Perdido</button>
@@ -1753,9 +1903,15 @@ export default function App(){
                     {items.length>0&&(
                       <div style={{borderTop:"1px solid var(--sep)",marginTop:".5rem",paddingTop:".5rem",display:"grid",gap:".25rem"}}>
                         {items.map((it,idx)=>(
-                          <div key={idx} style={{display:"flex",justifyContent:"space-between",fontSize:".73rem"}}>
-                            <span style={{color:"var(--tx3)"}}>{it.product_name} × {it.qty} {it.unit}</span>
-                            <span style={{color:"var(--tx4)",fontWeight:600}}>{fmt(it.unit_cost)}/un = {fmt(it.total)}</span>
+                          <div key={idx} style={{display:"flex",justifyContent:"space-between",alignItems:"center",fontSize:".73rem"}}>
+                            <div style={{display:"flex",alignItems:"center",gap:".4rem"}}>
+                              {it.received
+                                ?<span style={{fontSize:".65rem",color:"#10b981",background:"#10b98115",borderRadius:"99px",padding:".08rem .4rem",border:"1px solid #10b98130",flexShrink:0}}>✅ {it.received_qty||it.qty}</span>
+                                :<span style={{fontSize:".65rem",color:"#f59e0b",background:"#f59e0b15",borderRadius:"99px",padding:".08rem .4rem",border:"1px solid #f59e0b30",flexShrink:0}}>⏳ aguardando</span>
+                              }
+                              <span style={{color:it.received?"var(--tx5)":"var(--tx3)",textDecoration:it.received?"line-through":""}}>{it.product_name} × {it.qty} {it.unit}</span>
+                            </div>
+                            <span style={{color:"var(--tx4)",fontWeight:600}}>{fmt(it.total)}</span>
                           </div>
                         ))}
                       </div>
@@ -2703,40 +2859,126 @@ export default function App(){
     )}
 
     {/* ══ CONFIRMAR RECEBIMENTO ══ */}
-    {showReceiveModal&&(
-      <Modal title={"✅ Confirmar Recebimento — "+showReceiveModal.supplier_name} onClose={()=>setShowReceiveModal(null)} icon="arrup">
-        <div style={{background:"var(--infobox)",borderRadius:".45rem",padding:".55rem .8rem",marginBottom:".85rem",fontSize:".73rem",color:"#10b981",display:"flex",gap:".3rem",alignItems:"center"}}><Ic n="info" s={12}/>Confirmar receberá os produtos no estoque e registrará o pagamento no caixa</div>
-        {/* Itens */}
-        <div style={{background:"var(--pill)",borderRadius:".5rem",padding:".65rem .85rem",marginBottom:".85rem"}}>
-          <div style={{fontSize:".68rem",color:"var(--sub)",textTransform:"uppercase",marginBottom:".45rem",fontWeight:700}}>📦 Produtos a receber</div>
-          {JSON.parse(showReceiveModal.items||"[]").map((it,i)=>(
-            <div key={i} style={{display:"flex",justifyContent:"space-between",fontSize:".78rem",padding:".28rem 0",borderBottom:"1px solid var(--sep)"}}>
-              <span style={{color:"var(--tx)"}}>{it.product_name}</span>
-              <span style={{color:"#10b981",fontWeight:600}}>+{it.qty} {it.unit}</span>
-            </div>
-          ))}
-        </div>
-        {/* Pagamento */}
-        <div style={{marginBottom:".85rem"}}>
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:".5rem",marginBottom:".65rem"}}>
-            {[{l:"Total pedido",v:fmt(showReceiveModal.total_value),c:"var(--tx)"},{l:"Já pago (sinal)",v:fmt(showReceiveModal.initial_value),c:"#f59e0b"},{l:"Restante calculado",v:fmt(showReceiveModal.remaining_value),c:"#f56565"}].map(m=>(
-              <div key={m.l} style={{textAlign:"center",background:"var(--sumbox)",borderRadius:".4rem",padding:".5rem"}}>
-                <div style={{fontSize:".58rem",color:"var(--sub)",textTransform:"uppercase",marginBottom:".1rem"}}>{m.l}</div>
-                <div style={{fontSize:".82rem",fontWeight:700,color:m.c,fontFamily:"'Syne',sans-serif"}}>{m.v}</div>
-              </div>
-            ))}
+    {showReceiveModal&&(()=>{
+      const allItems=JSON.parse(showReceiveModal.items||"[]");
+      const pendingItems=allItems.map((it,i)=>({...it,_idx:i})).filter(it=>!it.received);
+      const checkedList=Object.entries(receiveChecked)
+        .filter(([,v])=>v.checked)
+        .map(([k,v])=>({index:parseInt(k),qty:parseInt(v.qty)||allItems[parseInt(k)].qty,item:allItems[parseInt(k)]}));
+      const selectedTotal=checkedList.reduce((a,{index,qty})=>a+(allItems[index].unit_cost*qty),0);
+      const orderTotal=showReceiveModal.total_value;
+      const alreadyPaid=showReceiveModal.initial_value+(showReceiveModal.remaining_paid||0);
+      const proportionalPayment=orderTotal>0?Math.round(((selectedTotal/orderTotal)*showReceiveModal.remaining_value)*100)/100:0;
+      const payAmt=parseFloat(receivePayment)!=null&&receivePayment!==""?parseFloat(receivePayment)||0:proportionalPayment;
+      return(
+        <Modal title={"📦 Receber Produtos — "+showReceiveModal.supplier_name} onClose={()=>{setShowReceiveModal(null);setReceiveChecked({});setReceivePayment("");}} icon="arrup" wide>
+          <div style={{background:"var(--infobox)",borderRadius:".45rem",padding:".5rem .8rem",marginBottom:".85rem",fontSize:".73rem",color:"#10b981",display:"flex",gap:".3rem",alignItems:"center"}}>
+            <Ic n="info" s={12}/>Selecione os produtos que chegaram. A entrada no estoque e o pagamento são feitos por item selecionado.
           </div>
-          <Inp label="Valor a pagar agora (R$)" hint="pode ajustar se necessário" type="number" min="0" step="0.01" value={receiveExtra} onChange={e=>setReceiveExtra(e.target.value)} style={{...IS,fontSize:".9rem"}}/>
-          {parseFloat(receiveExtra)>0&&parseFloat(receiveExtra)!==showReceiveModal.remaining_value&&(
-            <div style={{fontSize:".7rem",color:"#f59e0b",marginTop:".3rem",display:"flex",gap:".3rem",alignItems:"center"}}><Ic n="warn" s={11}/>Valor diferente do restante calculado ({fmt(showReceiveModal.remaining_value)})</div>
+
+          {/* Lista de itens do pedido */}
+          <div style={{marginBottom:"1rem"}}>
+            <div style={{fontSize:".68rem",color:"var(--sub)",textTransform:"uppercase",letterSpacing:".06em",marginBottom:".5rem",fontWeight:700,display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+              <span>Selecione os produtos recebidos</span>
+              <button onClick={()=>{
+                const newChecked={};
+                pendingItems.forEach(it=>{newChecked[it._idx]={checked:true,qty:it.qty};});
+                setReceiveChecked(newChecked);
+              }} style={{fontSize:".65rem",color:"#4f5ef0",background:"#4f5ef015",border:"1px solid #4f5ef030",borderRadius:".3rem",padding:".15rem .5rem",cursor:"pointer",fontFamily:"'DM Sans',sans-serif",fontWeight:600}}>Todos</button>
+            </div>
+
+            <div style={{display:"grid",gap:".45rem"}}>
+              {allItems.map((it,i)=>{
+                const isRec=it.received;
+                const ch=receiveChecked[i]||{checked:false,qty:it.qty};
+                return(
+                  <div key={i} style={{display:"grid",gridTemplateColumns:"auto 1fr auto auto",gap:".6rem",alignItems:"center",padding:".6rem .85rem",borderRadius:".55rem",border:"1px solid "+(isRec?"#10b98130":ch.checked?"#4f5ef040":"var(--bdr)"),background:isRec?"#10b98108":ch.checked?"#4f5ef008":"transparent",transition:"all .2s"}}>
+                    {/* Checkbox */}
+                    <button
+                      onClick={()=>{if(!isRec)setReceiveChecked(prev=>({...prev,[i]:{...prev[i],checked:!ch.checked,qty:prev[i]?.qty||it.qty}}));}}
+                      disabled={isRec}
+                      style={{width:22,height:22,borderRadius:".35rem",border:"2px solid "+(isRec?"#10b98160":ch.checked?"#4f5ef0":"var(--bdr2)"),background:isRec?"#10b98120":ch.checked?"#4f5ef0":"transparent",display:"flex",alignItems:"center",justifyContent:"center",cursor:isRec?"default":"pointer",flexShrink:0,transition:"all .2s"}}
+                    >
+                      {(isRec||ch.checked)&&<svg width="12" height="12" viewBox="0 0 12 12" fill="none"><polyline points="2,6 5,9 10,3" stroke={isRec?"#10b981":"#fff"} strokeWidth="2" strokeLinecap="round"/></svg>}
+                    </button>
+                    {/* Produto info */}
+                    <div>
+                      <div style={{fontSize:".83rem",fontWeight:600,color:isRec?"var(--tx5)":"var(--tx)",textDecoration:isRec?"line-through":""}}>{it.product_name}</div>
+                      <div style={{fontSize:".67rem",color:"var(--sub)"}}>{fmt(it.unit_cost)}/un · Total: {fmt(it.total)}</div>
+                    </div>
+                    {/* Quantidade */}
+                    {isRec?(
+                      <span style={{fontSize:".75rem",color:"#10b981",fontWeight:700,background:"#10b98115",borderRadius:"99px",padding:".15rem .55rem",border:"1px solid #10b98130",whiteSpace:"nowrap"}}>✅ {it.received_qty||it.qty} {it.unit}</span>
+                    ):(
+                      <div style={{display:"flex",alignItems:"center",gap:".3rem"}}>
+                        <span style={{fontSize:".68rem",color:"var(--sub)"}}>Qtd:</span>
+                        <input type="number" min="1" max={it.qty} value={ch.qty||it.qty}
+                          onChange={e=>setReceiveChecked(prev=>({...prev,[i]:{...prev[i],qty:Math.min(it.qty,Math.max(1,parseInt(e.target.value)||1)),checked:prev[i]?.checked||false}}))}
+                          disabled={!ch.checked}
+                          style={{width:55,background:"var(--inp)",border:"1px solid "+(ch.checked?"#4f5ef0":"var(--bdr2)"),borderRadius:".35rem",padding:".22rem .4rem",color:"var(--tx)",fontSize:".78rem",fontFamily:"'DM Sans',sans-serif",outline:"none",textAlign:"center",opacity:ch.checked?1:.5}}/>
+                        <span style={{fontSize:".68rem",color:"var(--sub)"}}>{it.unit}</span>
+                      </div>
+                    )}
+                    {/* Valor */}
+                    <span style={{fontSize:".8rem",fontWeight:700,color:isRec?"#10b981":ch.checked?"#4f5ef0":"var(--tx5)",fontFamily:"'Syne',sans-serif",minWidth:70,textAlign:"right"}}>
+                      {isRec?fmt(it.total):ch.checked?fmt(it.unit_cost*(ch.qty||it.qty)):"—"}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Pagamento */}
+          {checkedList.length>0&&(
+            <div style={{background:"var(--pill)",borderRadius:".5rem",padding:".75rem .85rem",marginBottom:"1rem"}}>
+              <div style={{fontSize:".68rem",color:"var(--sub)",textTransform:"uppercase",letterSpacing:".05em",marginBottom:".6rem",fontWeight:700}}>💰 Pagamento por este recebimento</div>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:".5rem",marginBottom:".65rem"}}>
+                {[
+                  {l:"Valor itens selecionados",v:fmt(selectedTotal),c:"var(--tx)"},
+                  {l:"Pagamento proporcional",v:fmt(proportionalPayment),c:"#f59e0b"},
+                  {l:"Já pago (sinal+anteriores)",v:fmt(alreadyPaid),c:"#10b981"},
+                ].map(m=>(
+                  <div key={m.l} style={{textAlign:"center",background:"var(--sumbox)",borderRadius:".4rem",padding:".5rem .3rem"}}>
+                    <div style={{fontSize:".57rem",color:"var(--sub)",textTransform:"uppercase",marginBottom:".1rem"}}>{m.l}</div>
+                    <div style={{fontSize:".82rem",fontWeight:700,color:m.c,fontFamily:"'Syne',sans-serif"}}>{m.v}</div>
+                  </div>
+                ))}
+              </div>
+              <div>
+                <div style={{fontSize:".68rem",color:"var(--sub)",marginBottom:".3rem"}}>Valor a pagar agora (R$) <span style={{color:"var(--tx6)"}}>— editável</span></div>
+                <input type="number" min="0" step="0.01" value={receivePayment!==""?receivePayment:String(proportionalPayment)}
+                  onChange={e=>setReceivePayment(e.target.value)}
+                  style={{...IS,fontSize:".9rem",fontWeight:700}}/>
+                {receivePayment!==""&&Math.abs(parseFloat(receivePayment)-proportionalPayment)>0.01&&(
+                  <div style={{fontSize:".68rem",color:"#f59e0b",marginTop:".28rem",display:"flex",gap:".3rem",alignItems:"center"}}>
+                    <Ic n="warn" s={11}/>Diferente do proporcional calculado ({fmt(proportionalPayment)})
+                  </div>
+                )}
+              </div>
+            </div>
           )}
-        </div>
-        <div style={{display:"flex",gap:".5rem",justifyContent:"flex-end"}}>
-          <Btn v="ghost" onClick={()=>setShowReceiveModal(null)}>Cancelar</Btn>
-          <Btn v="ok" onClick={()=>confirmReceive(showReceiveModal,receiveExtra)}><Ic n="save" s={13}/>Confirmar Recebimento</Btn>
-        </div>
-      </Modal>
-    )}
+
+          {checkedList.length===0&&pendingItems.length>0&&(
+            <div style={{background:"#f59e0b10",border:"1px solid #f59e0b30",borderRadius:".45rem",padding:".55rem .85rem",marginBottom:".85rem",fontSize:".75rem",color:"#f59e0b",display:"flex",gap:".35rem",alignItems:"center"}}>
+              <Ic n="warn" s={13}/>Selecione pelo menos 1 produto para registrar o recebimento
+            </div>
+          )}
+
+          <div style={{display:"flex",gap:".5rem",justifyContent:"space-between",alignItems:"center"}}>
+            <div style={{fontSize:".72rem",color:"var(--tx5)"}}>
+              {checkedList.length>0?checkedList.length+" produto(s) selecionado(s)":"Nenhum selecionado"}
+            </div>
+            <div style={{display:"flex",gap:".5rem"}}>
+              <Btn v="ghost" onClick={()=>{setShowReceiveModal(null);setReceiveChecked({});setReceivePayment("");}}>Cancelar</Btn>
+              <Btn v="ok" onClick={()=>confirmReceive(showReceiveModal,checkedList,receivePayment!==""?receivePayment:String(proportionalPayment))} disabled={checkedList.length===0}>
+                <Ic n="save" s={13}/>Confirmar Recebimento
+              </Btn>
+            </div>
+          </div>
+        </Modal>
+      );
+    })()}
 
     {/* Logout */}
     {logoutC&&(
