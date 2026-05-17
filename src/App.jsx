@@ -2380,7 +2380,7 @@ export default function App(){
           </div>
         )}
 
-        {        {tab==="config"&&isAdmin&&(
+        {tab==="config"&&isAdmin&&(
           <div style={{animation:"fadeUp .4s ease"}}>
             {/* Config header */}
             <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:"1rem",flexWrap:"wrap",gap:".5rem"}}>
