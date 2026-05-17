@@ -3857,7 +3857,6 @@ export default function App(){
           </div>
         </Modal>
       );
-      }catch(err){console.error("Recv modal error:",err);return <div style={{padding:"1rem",color:"#f56565",fontSize:".8rem"}}>⚠️ Erro ao renderizar. Feche e tente novamente.</div>;}
     })()}
 
     {/* ══ GOALS SCREEN ══ */}
@@ -4009,16 +4008,16 @@ export default function App(){
 
     {/* ══ CONFIRMAR RECEBIMENTO ══ */}
     {showReceiveModal&&(()=>{
-      try{
       const allItems=JSON.parse(showReceiveModal.items||"[]");
       const pendingItems=allItems.map((it,i)=>({...it,_idx:i})).filter(it=>!it.received);
       const checkedList=Object.entries(receiveChecked)
-        .filter(([,v])=>v.checked)
-        .map((c)=>({index:parseInt(k),qty:parseInt(v.qty)||allItems[parseInt(k)].qty,item:allItems[parseInt(k)]}));
+        .filter(([,v])=>v&&v.checked)
+        .map(([k,v])=>{const idx=parseInt(k);const it=allItems[idx];if(!it)return null;const q=parseInt(v.qty)||it.qty||1;return{index:idx,qty:q,item:it};})
+        .filter(Boolean);
       const selectedTotal=checkedList.reduce((a,{item,qty})=>a+(parseFloat(item?.unit_cost||item?.unit_price||0)*qty),0);
-      const orderTotal=showReceiveModal.total_value;
-      const alreadyPaid=showReceiveModal.initial_value+(showReceiveModal.remaining_paid||0);
-      const proportionalPayment=orderTotal>0?Math.round(((selectedTotal/orderTotal)*showReceiveModal.remaining_value)*100)/100:0;
+      const orderTotal=parseFloat(showReceiveModal.total_value)||0;
+      const alreadyPaid=(parseFloat(showReceiveModal.initial_value)||0)+(parseFloat(showReceiveModal.remaining_paid)||0);
+      const proportionalPayment=orderTotal>0?Math.round(((selectedTotal/orderTotal)*(parseFloat(showReceiveModal.remaining_value)||0))*100)/100:0;
       const payAmt=receivePayment!==""&&receivePayment!==null?parseFloat(receivePayment)||0:proportionalPayment;
       return(
         <Modal title={"📦 Receber Produtos — "+showReceiveModal.supplier_name} onClose={()=>{setShowReceiveModal(null);setReceiveChecked({});setReceivePayment("");}} icon="arrup" wide>
@@ -4163,7 +4162,6 @@ export default function App(){
                 onClick={async()=>{
                   if(!origem.address.trim()){toast$("Informe o endereço.","#f56565");return;}
                   toast$("🔍 Localizando...","#4f5ef0");
-                  try{
                     const results=await geocodeAddr(origem.address);
                     if(results.length===0){toast$("Endereço não encontrado. Tente incluir a cidade.","#f56565");return;}
                     const first=results[0];
