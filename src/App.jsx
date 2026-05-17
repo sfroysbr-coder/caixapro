@@ -3542,7 +3542,7 @@ export default function App(){
               {editing.dose_mg&&<span> · <strong>{editing.dose_mg}mg</strong> consumidos</span>}
             </div>
           )}
-        </div>
+        </div>}
 
         <Inp label="Nome *" value={editing.name} onChange={e=>setEditing(v=>({...v,name:e.target.value}))}/>
         <R2><Sel label="Fornecedor" value={editing.supplier_id||""} onChange={e=>setEditing(v=>({...v,supplier_id:e.target.value}))}><option value="">Nenhum</option>{suppliers.map(s=><option key={s.id} value={s.id}>{s.name}</option>)}</Sel><Inp label="Unidade" value={editing.unit||"un"} onChange={e=>setEditing(v=>({...v,unit:e.target.value}))}/></R2>
