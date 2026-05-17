@@ -1213,6 +1213,19 @@ export default function App(){
       toast$("✅ "+label+" salva!");
     }catch(e){toast$("Erro: "+e.message,"#f56565");}
   };
+  // Detecta referência circular na hierarquia
+  const wouldLoop=(childId,parentId)=>{
+    let cur=parentId;
+    const seen=new Set();
+    while(cur){
+      if(cur===childId)return true;
+      if(seen.has(cur))return false;
+      seen.add(cur);
+      cur=products.find(p=>p.id===cur)?.parent_product_id||null;
+    }
+    return false;
+  };
+
   const saveCategories=async(cats)=>{setDynCats(cats);await saveToSettings("categories",cats,"Categorias");};
   const savePayments=async(pays)=>{setDynPays(pays);await saveToSettings("payments",pays,"Formas de pagamento");};
   const saveCompanyInfo=async(info)=>{setCompanyInfo(info);await saveToSettings("companyinfo",info,"Informações da empresa");};
@@ -1534,8 +1547,29 @@ export default function App(){
   };
   const saveProduct=async()=>{
     const{markup,margin,profit}=calcM(editing.cost_per_unit,editing.price_per_unit);
+    // Detectar se vínculo pai mudou
+    const prevParentId=products.find(p=>p.id===editing.id)?.parent_product_id||null;
+    const newParentId=editing.parent_product_id||null;
+    const parentChanged=newParentId&&newParentId!==prevParentId;
     const sup=suppliers.find(s=>s.id===editing.supplier_id);
     await supabase.from("products").update({code:editing.code,name:editing.name,description:editing.description,category:editing.category,unit:editing.unit,cost_per_unit:parseFloat(editing.cost_per_unit),price_per_unit:parseFloat(editing.price_per_unit),units_per_pack:parseInt(editing.units_per_pack)||1,batch:editing.batch,expiry:editing.expiry||null,stock_qty:parseInt(editing.stock_qty),min_stock:parseInt(editing.min_stock)||5,supplier_id:editing.supplier_id||null,supplier_name:sup?.name||null,markup,margin,profit,parent_product_id:editing.parent_product_id||null,qty_per_parent:parseFloat(editing.qty_per_parent)||1,total_mg:parseFloat(editing.total_mg)||null,dose_mg:parseFloat(editing.dose_mg)||null}).eq("id",editing.id);
+    // Se pai foi vinculado/alterado e filho tem estoque: sincronizar estoque pai
+    if(parentChanged){
+      const childQty=parseInt(editing.stock_qty)||0;
+      const ratio=parseFloat(editing.qty_per_parent)||1;
+      if(childQty>0&&ratio>0){
+        const parentProd=products.find(p=>p.id===newParentId);
+        if(parentProd){
+          const impliedParentQty=Math.round((childQty/ratio)*100)/100;
+          // Somar ao estoque atual do pai (não sobrescrever)
+          const newParentQty=Math.round((parentProd.stock_qty+impliedParentQty)*100)/100;
+          await supabase.from("products").update({stock_qty:newParentQty}).eq("id",newParentId);
+          setProds(prev=>prev.map(p=>p.id===newParentId?{...p,stock_qty:newParentQty}:p));
+          toast$("✅ Produto atualizado e estoque de "+parentProd.name+" ajustado (+"+impliedParentQty+" un → "+newParentQty+" un)");
+          setModal(null);setEditing(null);return;
+        }
+      }
+    }
     toast$("Produto atualizado!");setModal(null);setEditing(null);
   };
   const delProduct=async id=>{await supabase.from("products").delete().eq("id",id);toast$("Removido.","#f59e0b");setModal(null);setEditing(null);};
@@ -1913,6 +1947,11 @@ export default function App(){
                         {products.some(x=>x.parent_product_id===p.id)&&<Badge color="#4f5ef0" sm>📦 {products.filter(x=>x.parent_product_id===p.id).length}x sub</Badge>}
                       {p.total_mg&&<Badge color="#8b44f0" sm>💊 {p.total_mg}mg/un</Badge>}
                       {p.dose_mg&&<Badge color="#8b44f0" sm>💊 {p.dose_mg}mg dose</Badge>}
+                      {p.parent_product_id&&p.qty_per_parent&&(
+                        <span style={{fontSize:".62rem",color:"#8b44f0"}}>
+                          ≡{(1/parseFloat(p.qty_per_parent)).toFixed(3)} {products.find(x=>x.id===p.parent_product_id)?.name?.split(" ").slice(0,2).join(" ")||""}
+                        </span>
+                      )}
                         <Badge color={stkColor(p.stock_qty)} sm>{p.stock_qty<=0?"Zerado":p.stock_qty<=(p.min_stock||5)?"Baixo":"OK"}</Badge>
                         {p.supplier_name&&<Badge color="#8b44f0" sm>🏭 {p.supplier_name}</Badge>}
                         {days!==null&&days<=30&&<Badge color={expColor(days)} sm>{days<0?"Vencido":`Vcto ${days}d`}</Badge>}
@@ -3272,7 +3311,7 @@ export default function App(){
             <div style={{fontSize:".65rem",color:"var(--sub)",marginBottom:".28rem"}}>Produto principal (pai)</div>
             <select value={pf.parent_product_id||""} onChange={e=>setPf(f=>({...f,parent_product_id:e.target.value||null}))} style={IS}>
               <option value="">Produto independente</option>
-              {products.filter(p=>!p.parent_product_id).map(p=><option key={p.id} value={p.id}>{p.name}</option>)}
+              {products.filter(p=>!wouldLoop(p.id,p.id)).map(p=><option key={p.id} value={p.id}>{p.name}{p.parent_product_id?' (sub de '+products.find(x=>x.id===p.parent_product_id)?.name+')':''}</option>)}
             </select>
           </div>
           <Inp label={"Qtd por "+((pf.parent_product_id&&products.find(p=>p.id===pf.parent_product_id)?.name)||"produto pai")} type="number" min="0.001" step="0.001" hint="ex: 4 ampolas/caixa" value={pf.qty_per_parent||""} onChange={e=>setPf(f=>({...f,qty_per_parent:e.target.value}))} disabled={!pf.parent_product_id}/>
@@ -3346,7 +3385,7 @@ export default function App(){
             <div style={{fontSize:".65rem",color:"var(--sub)",marginBottom:".28rem"}}>Produto principal (pai)</div>
             <select value={editing.parent_product_id||""} onChange={e=>setEditing(v=>({...v,parent_product_id:e.target.value||null}))} style={IS}>
               <option value="">Produto independente</option>
-              {products.filter(p=>p.id!==editing.id&&!p.parent_product_id).map(p=><option key={p.id} value={p.id}>{p.name}</option>)}
+              {products.filter(p=>p.id!==editing.id&&!wouldLoop(editing.id,p.id)).map(p=><option key={p.id} value={p.id}>{p.name}{p.parent_product_id?' (sub de '+products.find(x=>x.id===p.parent_product_id)?.name+')':''}</option>)}
             </select>
           </div>
           <Inp label="Qtd por produto pai" type="number" min="0.001" step="0.001" hint="ex: 4 ampolas/caixa" value={editing.qty_per_parent||""} onChange={e=>setEditing(v=>({...v,qty_per_parent:e.target.value}))} disabled={!editing.parent_product_id}/>
