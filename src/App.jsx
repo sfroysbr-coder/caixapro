@@ -4162,6 +4162,7 @@ export default function App(){
                 onClick={async()=>{
                   if(!origem.address.trim()){toast$("Informe o endereço.","#f56565");return;}
                   toast$("🔍 Localizando...","#4f5ef0");
+                  try{
                     const results=await geocodeAddr(origem.address);
                     if(results.length===0){toast$("Endereço não encontrado. Tente incluir a cidade.","#f56565");return;}
                     const first=results[0];
