@@ -1229,6 +1229,11 @@ export default function App(){
 
   // ── SINCRONIZAR HIERARQUIA (bottom-up com mg quando disponível) ─
   const syncHierarchy=async()=>{
+    // First reset all partial counters for tirzepatida hierarchy
+    const tgWithPartial=products.filter(p=>p.category==="tirzepatida"&&(p.units_consumed_partial||0)>0);
+    for(const p of tgWithPartial){
+      await supabase.from("products").update({units_consumed_partial:0}).eq("id",p.id);
+    }
     const tgProds=products.filter(p=>p.category==="tirzepatida"&&p.parent_product_id);
     if(tgProds.length===0){toast$("Nenhum subproduto Tirzepatida para sincronizar.","#f59e0b");return;}
     toast$("🔄 Sincronizando hierarquia...","#4f5ef0");
@@ -1418,38 +1423,91 @@ export default function App(){
 
   // ── HIERARQUIA DE PRODUTOS ─────────────────────────────────────
   // Deduz/adiciona estoque em cascata pela hierarquia pai→filho
+  // ── CASCATA COM NÚMEROS INTEIROS ─────────────────────────────────
+  // Acumula consumo parcial no pai; só deduz quando atingir 1 unidade inteira
   const cascadeStock=async(productId,qty,direction,visited=new Set())=>{
-    if(visited.has(productId))return; // evita loop circular
+    if(visited.has(productId)||!productId||qty<=0)return;
     visited.add(productId);
-    const prod=products.find(p=>p.id===productId);
+    // Busca dado atual do DB (sempre fresco para evitar estado stale)
+    const{data:prod}=await supabase.from("products").select("*").eq("id",productId).single();
     if(!prod)return;
-    const newQty=Math.max(0,Math.round((prod.stock_qty+(direction==="add"?qty:-qty))*100)/100);
-    await supabase.from("products").update({stock_qty:newQty}).eq("id",productId);
-    // Propagar para o pai
-    if(direction==="subtract"&&prod.parent_product_id&&parseFloat(prod.qty_per_parent)>0){
-      const parentDeduction=qty/parseFloat(prod.qty_per_parent);
-      if(parentDeduction>=0.001){
-        await cascadeStock(prod.parent_product_id,parentDeduction,"subtract",visited);
+
+    if(direction==="subtract"){
+      // 1. Deduzir do produto atual (inteiro)
+      const intQty=Math.max(1,Math.round(qty));
+      const newQty=Math.max(0,prod.stock_qty-intQty);
+      await supabase.from("products").update({stock_qty:newQty}).eq("id",productId);
+      setProds(prev=>prev.map(p=>p.id===productId?{...p,stock_qty:newQty}:p));
+
+      // 2. Propagar ao pai com controle de acumulador parcial
+      if(prod.parent_product_id&&parseFloat(prod.qty_per_parent)>0){
+        const ratio=parseFloat(prod.qty_per_parent);
+        const{data:parent}=await supabase.from("products").select("*").eq("id",prod.parent_product_id).single();
+        if(!parent)return;
+        // Acumula consumo fracionado
+        const partialAdded=intQty/ratio;
+        const newPartial=Math.round(((parent.units_consumed_partial||0)+partialAdded)*10000)/10000;
+        const intDeduct=Math.floor(newPartial);
+        const remaining=Math.round((newPartial-intDeduct)*10000)/10000;
+        // Só atualiza o pai — sem deduzir stock ainda (apenas partial)
+        await supabase.from("products").update({units_consumed_partial:remaining,...(intDeduct>0?{stock_qty:Math.max(0,parent.stock_qty-intDeduct)}:{})}).eq("id",parent.id);
+        setProds(prev=>prev.map(p=>p.id===parent.id?{...p,units_consumed_partial:remaining,...(intDeduct>0?{stock_qty:Math.max(0,p.stock_qty-intDeduct)}:{})}:p));
+        // Se atingiu unidade inteira: propaga ao avô
+        if(intDeduct>0&&!visited.has(parent.id)){
+          await cascadeStock(parent.id,intDeduct,"propagate_only",visited);
+        }
       }
+    } else if(direction==="propagate_only"){
+      // Apenas propaga para o pai (já deduziu do atual acima)
+      if(prod.parent_product_id&&parseFloat(prod.qty_per_parent)>0){
+        const ratio=parseFloat(prod.qty_per_parent);
+        const{data:parent}=await supabase.from("products").select("*").eq("id",prod.parent_product_id).single();
+        if(!parent)return;
+        const partialAdded=qty/ratio;
+        const newPartial=Math.round(((parent.units_consumed_partial||0)+partialAdded)*10000)/10000;
+        const intDeduct=Math.floor(newPartial);
+        const remaining=Math.round((newPartial-intDeduct)*10000)/10000;
+        await supabase.from("products").update({units_consumed_partial:remaining,...(intDeduct>0?{stock_qty:Math.max(0,parent.stock_qty-intDeduct)}:{})}).eq("id",parent.id);
+        setProds(prev=>prev.map(p=>p.id===parent.id?{...p,units_consumed_partial:remaining,...(intDeduct>0?{stock_qty:Math.max(0,p.stock_qty-intDeduct)}:{})}:p));
+        if(intDeduct>0&&!visited.has(parent.id)){
+          await cascadeStock(parent.id,intDeduct,"propagate_only",visited);
+        }
+      }
+    } else {
+      // direction === "add" (reversal)
+      const newQty=prod.stock_qty+Math.round(qty);
+      await supabase.from("products").update({stock_qty:newQty}).eq("id",productId);
+      setProds(prev=>prev.map(p=>p.id===productId?{...p,stock_qty:newQty}:p));
     }
-    // Atualizar estado local
-    setProds(prev=>prev.map(p=>p.id===productId?{...p,stock_qty:newQty}:p));
   };
 
   // Reverter cascata (ao excluir venda)
   const cascadeStockReverse=async(productId,qty,visited=new Set())=>{
     if(visited.has(productId)||!productId||qty<=0)return;
     visited.add(productId);
-    const prod=products.find(p=>p.id===productId);
+    // 1. Restaurar produto atual (inteiro)
+    const{data:prod}=await supabase.from("products").select("*").eq("id",productId).single();
     if(!prod)return;
-    const newQty=Math.max(0,Math.round((prod.stock_qty+qty)*100)/100);
+    const intQty=Math.max(1,Math.round(qty));
+    const newQty=prod.stock_qty+intQty;
     await supabase.from("products").update({stock_qty:newQty}).eq("id",productId);
     setProds(prev=>prev.map(p=>p.id===productId?{...p,stock_qty:newQty}:p));
-    // Propaga reversão para o produto PAI também
+    // 2. Reverter acumulador parcial no pai
     if(prod.parent_product_id&&parseFloat(prod.qty_per_parent)>0){
-      const parentRestore=qty/parseFloat(prod.qty_per_parent);
-      if(parentRestore>=0.001){
-        await cascadeStockReverse(prod.parent_product_id,parentRestore,visited);
+      const ratio=parseFloat(prod.qty_per_parent);
+      const{data:parent}=await supabase.from("products").select("*").eq("id",prod.parent_product_id).single();
+      if(!parent)return;
+      const partialToRestore=intQty/ratio;
+      let newPartial=Math.round(((parent.units_consumed_partial||0)-partialToRestore)*10000)/10000;
+      let intRestore=0;
+      if(newPartial<0){
+        intRestore=Math.ceil(-newPartial);
+        newPartial=Math.round((newPartial+intRestore)*10000)/10000;
+      }
+      await supabase.from("products").update({units_consumed_partial:Math.max(0,newPartial),...(intRestore>0?{stock_qty:parent.stock_qty+intRestore}:{})}).eq("id",parent.id);
+      setProds(prev=>prev.map(p=>p.id===parent.id?{...p,units_consumed_partial:Math.max(0,newPartial),...(intRestore>0?{stock_qty:p.stock_qty+intRestore}:{})}:p));
+      if(intRestore>0&&!visited.has(parent.id)){
+        await cascadeStockReverse(parent.id,intRestore,visited);
       }
     }
   };
@@ -1808,6 +1866,39 @@ export default function App(){
             );
           })()}
 
+          {/* Painel de controle mg Tirzepatida */}
+          {(()=>{
+            const tgProds=products.filter(p=>p.category==="tirzepatida"&&p.total_mg);
+            if(tgProds.length===0)return null;
+            const totalMgDisp=tgProds.reduce((a,p)=>a+((p.stock_qty-(p.units_consumed_partial||0))*parseFloat(p.total_mg)),0);
+            const tgFracoes=products.filter(p=>p.category==="tirzepatida"&&p.dose_mg&&p.parent_product_id);
+            return(
+              <div style={{background:"linear-gradient(135deg,#8b44f015,#4f5ef010)",border:"1px solid #8b44f030",borderRadius:".75rem",padding:".75rem 1rem",marginBottom:".65rem"}}>
+                <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:".5rem"}}>
+                  <div style={{fontWeight:700,fontSize:".78rem",color:"#8b44f0",display:"flex",alignItems:"center",gap:".35rem"}}>💊 Controle Tirzepatida · mg disponíveis</div>
+                  <span style={{fontSize:".72rem",fontWeight:800,color:"#8b44f0",fontFamily:"'Syne',sans-serif"}}>{totalMgDisp.toFixed(1)}mg</span>
+                </div>
+                <div style={{display:"flex",gap:".4rem",flexWrap:"wrap"}}>
+                  {tgProds.map(p=>{
+                    const mgDisp=(p.stock_qty-(p.units_consumed_partial||0))*parseFloat(p.total_mg);
+                    const partial=p.units_consumed_partial||0;
+                    return(
+                      <div key={p.id} style={{fontSize:".68rem",color:"#8b44f0",background:"#8b44f015",borderRadius:".4rem",padding:".2rem .55rem",border:"1px solid #8b44f030"}}>
+                        {p.name.split(" ")[0]}: <strong>{p.stock_qty} un</strong>
+                        {partial>0&&<span style={{color:"#f59e0b"}}> · {(partial*parseFloat(p.total_mg)).toFixed(1)}mg em uso</span>}
+                      </div>
+                    );
+                  })}
+                  {tgFracoes.map(p=>(
+                    <div key={p.id} style={{fontSize:".68rem",color:"var(--tx4)",background:"var(--pill)",borderRadius:".4rem",padding:".2rem .55rem",border:"1px solid var(--bdr)"}}>
+                      {p.dose_mg}mg: <strong>{p.stock_qty} doses</strong>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            );
+          })()}
+
           {/* Informativos — A Receber + Meta + Alertas */}
           {(()=>{
             const now=new Date();
@@ -2003,7 +2094,10 @@ export default function App(){
                         <span style={{fontFamily:"'Syne',sans-serif",fontWeight:700,fontSize:".88rem",color:"var(--tx)"}}>{(activeCats.find(c=>c.key===p.category)||{icon:"📋"}).icon} {p.name}</span>
                         {p.parent_product_id&&<Badge color="#8b44f0" sm>🧬 {products.find(x=>x.id===p.parent_product_id)?.name?.split(" ")[0]||"sub"}</Badge>}
                         {products.some(x=>x.parent_product_id===p.id)&&<Badge color="#4f5ef0" sm>📦 {products.filter(x=>x.parent_product_id===p.id).length}x sub</Badge>}
-                      {p.total_mg&&<Badge color="#8b44f0" sm>💊 {p.total_mg}mg/un</Badge>}
+                      {p.category==="tirzepatida"&&(p.units_consumed_partial||0)>0&&(
+                        <Badge color="#f59e0b" sm>⚡ {((p.units_consumed_partial||0)*100).toFixed(0)}% cons.</Badge>
+                      )}
+                      {p.total_mg&&<Badge color="#8b44f0" sm>💊 {((p.stock_qty-(p.units_consumed_partial||0))*parseFloat(p.total_mg)).toFixed(0)}mg disp.</Badge>}
                       {p.dose_mg&&<Badge color="#8b44f0" sm>💊 {p.dose_mg}mg dose</Badge>}
                       {p.parent_product_id&&p.qty_per_parent&&(
                         <span style={{fontSize:".62rem",color:"#8b44f0"}}>
