@@ -15,7 +15,14 @@ const expColor=d=>d===null?"var(--tx5)":d<0?"#f56565":d<=30?"#f59e0b":"#10b981";
 const stkColor=q=>q<=0?"#f56565":q<=5?"#f59e0b":"#10b981";
 
 const ROLES={admin:"Admin",operator:"Operador",viewer:"Visualizador"};
-const CATS={tirzepatida:"💉",material:"🧊",embalagem:"📦",seringa:"🩺",outro:"📋"};
+const DEFAULT_CATS=[
+  {key:"tirzepatida",label:"Tirzepatida",icon:"💉"},
+  {key:"seringa",label:"Seringas",icon:"🩺"},
+  {key:"caneta",label:"Canetas",icon:"✒️"},
+  {key:"acessorio",label:"Acessórios",icon:"📦"},
+  {key:"outro",label:"Outros",icon:"📋"},
+];
+const CATS={tirzepatida:"💉",seringa:"🩺",caneta:"✒️",acessorio:"📦",outro:"📋"};
 const PAYS_SIMPLES=["Dinheiro","PIX","Transferência"];
 const CARD_BRANDS=["Visa","Mastercard","Elo","Hipercard","AmEx"];
 const CARD_MODES=[
@@ -183,14 +190,17 @@ const exportOrderPDF=(order)=>{
   const statusColor=order.status==="recebido"?[0,150,100]:order.status==="perdido"?[200,60,60]:order.status==="parcial"?[8,145,178]:[200,140,0];
 
   // ── Cabeçalho ──
+  const showComp=typeof companyInfo!=="undefined"&&companyInfo.showInPDF!==false;
+  const cname=showComp&&companyInfo.name?companyInfo.name:"CaixaPro · Tirzepatida";
   doc.setFillColor(13,15,26);
   doc.rect(0,0,W,22,"F");
   doc.setTextColor(232,234,246);
   doc.setFontSize(14);doc.setFont("helvetica","bold");
-  doc.text("CaixaPro · Tirzepatida",margin,10);
+  doc.text(cname,margin,10);
   doc.setFontSize(9);doc.setFont("helvetica","normal");doc.setTextColor(160,160,200);
   doc.text("Pedido de Compra",margin,16);
-  doc.text(new Date().toLocaleString("pt-BR"),W-margin,16,{align:"right"});
+  if(showComp&&companyInfo.phone)doc.text(companyInfo.phone,W-margin,16,{align:"right"});
+  else doc.text(new Date().toLocaleString("pt-BR"),W-margin,16,{align:"right"});
 
   // ── Badge de status ──
   doc.setFillColor(...statusColor);
@@ -288,7 +298,8 @@ const exportOrderPDF=(order)=>{
   // ── Rodapé ──
   doc.setFontSize(7.5);doc.setFont("helvetica","normal");doc.setTextColor(180,180,200);
   doc.line(margin,282,W-margin,282);
-  doc.text("CaixaPro · Gestão Tirzepatida · Documento gerado em "+new Date().toLocaleString("pt-BR"),W/2,287,{align:"center"});
+  const footerTxt=showComp&&companyInfo.name?companyInfo.name+" · "+new Date().toLocaleString("pt-BR"):"Documento gerado em "+new Date().toLocaleString("pt-BR");
+  doc.text(footerTxt,W/2,287,{align:"center"});
   doc.save("pedido-"+order.id.slice(0,8).toUpperCase()+"-"+order.status.toUpperCase()+".pdf");
 };
 
@@ -615,6 +626,20 @@ export default function App(){
   const[importCalc,setImportCalc]=useState({totalCost:"",qty:"",extras:""});
   const[receivables,setReceivables]=useState([]);
   const[recForm,setRecForm]=useState({client_id:"",client_name:"",description:"",value:"",due_date:""});
+  // ── Config global ──────────────────────────────────────────────
+  const[configSection,setConfigSection]=useState("usuarios");
+  const[dynCats,setDynCats]=useState(DEFAULT_CATS);
+  const[dynPays,setDynPays]=useState([]);
+  const[companyInfo,setCompanyInfo]=useState({name:"CaixaPro · Tirzepatida",phone:"",address:"",cnpj:"",obs:"",showInPDF:true});
+  const[newCatName,setNewCatName]=useState("");
+  const[newCatIcon,setNewCatIcon]=useState("📦");
+  const[newPayName,setNewPayName]=useState("");
+  const[localCI,setLocalCI]=useState(null);
+  // Pagamentos ativos (dinâmicos ou default)
+  const activePays=dynPays.length>0?dynPays:[...PAYS_SIMPLES,"Débito","Crédito à Vista","Crédito Parcelado"];
+  const activeSimplePays=dynPays.length>0?dynPays.filter(p=>!["Débito","Crédito à Vista","Crédito Parcelado"].includes(p)):PAYS_SIMPLES;
+  const activeCats=dynCats.length>0?dynCats:DEFAULT_CATS;
+
   // ── Pedidos ────────────────────────────────────────────────────
   const[orders,setOrders]=useState([]);
   const[showOrderModal,setShowOrderModal]=useState(false);
@@ -639,7 +664,7 @@ export default function App(){
   const[freteConfig,setFreteConfig]=useState(defaultFreteConfig);
   const[localFrete,setLocalFrete]=useState(null);
   const[showFreteConfig,setShowFreteConfig]=useState(false);
-  const[freteOrigem,setFreteOrigem]=useState("1");
+  const[freteOrigem,setFreteOrigem]=useState(()=>freteConfig?.origens?.find(o=>o.lat)?.id||"1");
   const[freteDestino,setFreteDestino]=useState("");
   const[freteResult,setFreteResult]=useState(null);
   const[freteLoading,setFreteLoading]=useState(false);
@@ -718,6 +743,12 @@ export default function App(){
         if(taxRow){try{setCardTaxes(JSON.parse(taxRow.value));}catch{}}
         const freteRow=settings.find(s=>s.key==="freteconfig");
         if(freteRow){try{setFreteConfig(JSON.parse(freteRow.value));}catch{}}
+        const catsRow=settings.find(s=>s.key==="categories");
+        if(catsRow){try{setDynCats(JSON.parse(catsRow.value));}catch{}}
+        const paysRow=settings.find(s=>s.key==="payments");
+        if(paysRow){try{setDynPays(JSON.parse(paysRow.value));}catch{}}
+        const compRow=settings.find(s=>s.key==="companyinfo");
+        if(compRow){try{setCompanyInfo(JSON.parse(compRow.value));}catch{}}
         const goals={};
         settings.filter(s=>s.key.startsWith("goal_")).forEach(s=>{
           goals[s.key.replace("goal_","")]=parseFloat(s.value)||0;
@@ -749,9 +780,10 @@ export default function App(){
   const lowStk=useMemo(()=>products.filter(p=>p.stock_qty>0&&p.stock_qty<=(p.min_stock||5)),[products]);
   // Helper: calcula receita real descontando desconto UMA vez por batch
   const batchRevenue=(arr)=>{
+    if(!arr||!arr.length)return 0;
     const b={};
     arr.forEach(s=>{
-      const k=s.batch_id||s.id;
+      const k=s.batch_id||s.id||Math.random().toString();
       if(!b[k])b[k]={total:0,disc:parseFloat(s.discount)||0};
       b[k].total+=parseFloat(s.total_price)||0;
     });
@@ -839,12 +871,8 @@ export default function App(){
 
       // 2. Baixar estoque de cada produto
       for(const item of validItems){
-        const prod=products.find(p=>p.id===item.product_id);
-        if(prod){
-          await supabase.from("products")
-            .update({stock_qty:prod.stock_qty-item.quantity})
-            .eq("id",item.product_id);
-        }
+        // Deduz estoque em cascata (propaga para produto pai automaticamente)
+        await cascadeStock(item.product_id,item.quantity,"subtract");
       }
 
       // 3. Montar lançamentos de caixa
@@ -1126,8 +1154,16 @@ export default function App(){
       for(const {index,qty,item} of checkedItems){
         const prod=products.find(p=>p.id===item.product_id||p.name===item.product_name);
         if(prod&&qty>0){
-          await supabase.from("products").update({stock_qty:prod.stock_qty+qty}).eq("id",prod.id);
+          // Atualizar estoque do produto recebido
+          const newQty=Math.round((prod.stock_qty+qty)*100)/100;
+          await supabase.from("products").update({stock_qty:newQty}).eq("id",prod.id);
+          setProds(prev=>prev.map(p=>p.id===prod.id?{...p,stock_qty:newQty}:p));
           receivedNames.push(item.product_name+" ("+qty+")");
+          // Expandir automaticamente para subprodutos (ex: Caixa → Ampolas → Frações)
+          const children=products.filter(c=>c.parent_product_id===prod.id&&parseFloat(c.qty_per_parent)>0);
+          if(children.length>0){
+            await expandProductToChildren(prod.id,qty);
+          }
         }
         // Marcar item como recebido no JSON
         allItems[index]={...allItems[index],received:true,received_qty:qty,received_date:today()};
@@ -1169,6 +1205,18 @@ export default function App(){
 
 
   // ── FRETE HELPERS ───────────────────────────────────────────────
+  const saveToSettings=async(key,value,label="Configuração")=>{
+    try{
+      await supabase.from("app_settings").upsert({
+        key,value:JSON.stringify(value),updated_at:nowISO(),updated_by:cu.display_name
+      },{onConflict:"key"});
+      toast$("✅ "+label+" salva!");
+    }catch(e){toast$("Erro: "+e.message,"#f56565");}
+  };
+  const saveCategories=async(cats)=>{setDynCats(cats);await saveToSettings("categories",cats,"Categorias");};
+  const savePayments=async(pays)=>{setDynPays(pays);await saveToSettings("payments",pays,"Formas de pagamento");};
+  const saveCompanyInfo=async(info)=>{setCompanyInfo(info);await saveToSettings("companyinfo",info,"Informações da empresa");};
+
   const saveFreteConfig=async(cfg)=>{
     try{
       await supabase.from("app_settings").upsert({
@@ -1296,13 +1344,71 @@ export default function App(){
     }catch(ex){toast$("Erro: "+ex.message,"#f56565");}
   };
 
+
+  // ── HIERARQUIA DE PRODUTOS ─────────────────────────────────────
+  // Deduz/adiciona estoque em cascata pela hierarquia pai→filho
+  const cascadeStock=async(productId,qty,direction,visited=new Set())=>{
+    if(visited.has(productId))return; // evita loop circular
+    visited.add(productId);
+    const prod=products.find(p=>p.id===productId);
+    if(!prod)return;
+    const newQty=Math.max(0,Math.round((prod.stock_qty+(direction==="add"?qty:-qty))*100)/100);
+    await supabase.from("products").update({stock_qty:newQty}).eq("id",productId);
+    // Propagar para o pai
+    if(direction==="subtract"&&prod.parent_product_id&&parseFloat(prod.qty_per_parent)>0){
+      const parentDeduction=qty/parseFloat(prod.qty_per_parent);
+      if(parentDeduction>=0.001){
+        await cascadeStock(prod.parent_product_id,parentDeduction,"subtract",visited);
+      }
+    }
+    // Atualizar estado local
+    setProds(prev=>prev.map(p=>p.id===productId?{...p,stock_qty:newQty}:p));
+  };
+
+  // Reverter cascata (ao excluir venda)
+  const cascadeStockReverse=async(productId,qty,visited=new Set())=>{
+    if(visited.has(productId)||!productId||qty<=0)return;
+    visited.add(productId);
+    const prod=products.find(p=>p.id===productId);
+    if(!prod)return;
+    const newQty=Math.max(0,Math.round((prod.stock_qty+qty)*100)/100);
+    await supabase.from("products").update({stock_qty:newQty}).eq("id",productId);
+    setProds(prev=>prev.map(p=>p.id===productId?{...p,stock_qty:newQty}:p));
+    // Propaga reversão para o produto PAI também
+    if(prod.parent_product_id&&parseFloat(prod.qty_per_parent)>0){
+      const parentRestore=qty/parseFloat(prod.qty_per_parent);
+      if(parentRestore>=0.001){
+        await cascadeStockReverse(prod.parent_product_id,parentRestore,visited);
+      }
+    }
+  };
+
+  // Expandir produto pai em filhos ao receber
+  const expandProductToChildren=async(productId,qty,visited=new Set())=>{
+    if(visited.has(productId))return; // evita loop circular
+    visited.add(productId);
+    // Busca filhos do produto — usa state local (mais rápido) OU refetch se necessário
+    const latestProds=products; // estado atual
+    const children=latestProds.filter(p=>p.parent_product_id===productId&&parseFloat(p.qty_per_parent)>0);
+    for(const child of children){
+      const childQty=Math.round(qty*parseFloat(child.qty_per_parent)*1000)/1000;
+      if(childQty<=0)continue;
+      const currentChild=latestProds.find(p=>p.id===child.id)||child;
+      const newQty=Math.round((currentChild.stock_qty+childQty)*100)/100;
+      await supabase.from("products").update({stock_qty:newQty}).eq("id",child.id);
+      setProds(prev=>prev.map(p=>p.id===child.id?{...p,stock_qty:newQty}:p));
+      // Recursão para próximo nível (ex: Ampola → Fração)
+      await expandProductToChildren(child.id,childQty,visited);
+    }
+  };
+
   const loadReceivables=async()=>{
     const{data}=await supabase.from("receivables").select("*").order("due_date",{ascending:true});
     if(data)setReceivables(data);
   };
   const addReceivable=async()=>{
     if(!recForm.description||!recForm.value){toast$("Preencha descrição e valor.","#f56565");return;}
-    await supabase.from("receivables").insert([{id:uid(),client_id:recForm.client_id||null,client_name:recForm.client_name||null,description:recForm.description,value:parseFloat(recForm.value),due_date:recForm.due_date||null,paid:false,added_by:cu.display_name,created_at:nowISO()}]);
+    await supabase.from("receivables").insert([{id:uid(),client_id:recForm.client_id||null,client_name:recForm.client_name||null,description:recForm.description,value:parseFloat(recForm.value),due_date:recForm.due_date||null,paid:false,parent_product_id:pf.parent_product_id||null,qty_per_parent:parseFloat(pf.qty_per_parent)||1,total_mg:parseFloat(pf.total_mg)||null,dose_mg:parseFloat(pf.dose_mg)||null,added_by:cu.display_name,created_at:nowISO()}]);
     setRecForm({client_id:"",client_name:"",description:"",value:"",due_date:""});
     loadReceivables();toast$("Conta registrada!");
   };
@@ -1340,11 +1446,12 @@ export default function App(){
 
       // 3. Reverter estoque de CADA item do batch
       for(const s of batchSales){
-        const prod=products.find(p=>p.id===s.product_id||p.name===s.product_name);
-        if(prod&&s.quantity>0){
-          await supabase.from("products")
-            .update({stock_qty:(prod.stock_qty||0)+s.quantity})
-            .eq("id",prod.id);
+        // Reverter estoque em cascata (produto + pai + avô...)
+        if(s.product_id&&s.quantity>0){
+          await cascadeStockReverse(s.product_id,s.quantity);
+        } else {
+          const prod=products.find(p=>p.name===s.product_name);
+          if(prod&&s.quantity>0)await cascadeStockReverse(prod.id,s.quantity);
         }
       }
 
@@ -1428,7 +1535,7 @@ export default function App(){
   const saveProduct=async()=>{
     const{markup,margin,profit}=calcM(editing.cost_per_unit,editing.price_per_unit);
     const sup=suppliers.find(s=>s.id===editing.supplier_id);
-    await supabase.from("products").update({code:editing.code,name:editing.name,description:editing.description,category:editing.category,unit:editing.unit,cost_per_unit:parseFloat(editing.cost_per_unit),price_per_unit:parseFloat(editing.price_per_unit),units_per_pack:parseInt(editing.units_per_pack)||1,batch:editing.batch,expiry:editing.expiry||null,stock_qty:parseInt(editing.stock_qty),min_stock:parseInt(editing.min_stock)||5,supplier_id:editing.supplier_id||null,supplier_name:sup?.name||null,markup,margin,profit}).eq("id",editing.id);
+    await supabase.from("products").update({code:editing.code,name:editing.name,description:editing.description,category:editing.category,unit:editing.unit,cost_per_unit:parseFloat(editing.cost_per_unit),price_per_unit:parseFloat(editing.price_per_unit),units_per_pack:parseInt(editing.units_per_pack)||1,batch:editing.batch,expiry:editing.expiry||null,stock_qty:parseInt(editing.stock_qty),min_stock:parseInt(editing.min_stock)||5,supplier_id:editing.supplier_id||null,supplier_name:sup?.name||null,markup,margin,profit,parent_product_id:editing.parent_product_id||null,qty_per_parent:parseFloat(editing.qty_per_parent)||1,total_mg:parseFloat(editing.total_mg)||null,dose_mg:parseFloat(editing.dose_mg)||null}).eq("id",editing.id);
     toast$("Produto atualizado!");setModal(null);setEditing(null);
   };
   const delProduct=async id=>{await supabase.from("products").delete().eq("id",id);toast$("Removido.","#f59e0b");setModal(null);setEditing(null);};
@@ -1487,7 +1594,7 @@ export default function App(){
     {id:"pedidos",l:"Pedidos",n:"pkg"},
     {id:"frete",l:"Frete",n:"delivery"},
     {id:"recebiveis",l:"A Receber",n:"dollar"},
-    ...(isAdmin?[{id:"usuarios",l:"Usuários",n:"users"}]:[]),
+    ...(isAdmin?[{id:"config",l:"Config",n:"settings"}]:[]),
   ];
 
   // Helper cálculo preview
@@ -1555,7 +1662,8 @@ export default function App(){
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:".75rem",flexWrap:"wrap",gap:".5rem"}}>
             <div style={{display:"flex",gap:".4rem",flexWrap:"wrap"}}>
               <Btn sm v="ghost" onClick={()=>setShowGoals(true)}>📅 Metas & Histórico</Btn>
-              <Btn sm v="warn" onClick={()=>setShowOrderModal(true)}><Ic n="pkg" s={12}/>📦 Novo Pedido</Btn>
+              <Btn sm v="warn" onClick={()=>setShowOrderModal(true)}><Ic n="pkg" s={12}/>📦 Pedido de Compra</Btn>
+              {isAdmin&&<Btn sm v="ghost" onClick={()=>{setTab("config");setConfigSection("usuarios");}}>⚙️ Config</Btn>}
             </div>
             <Btn v="info" onClick={()=>setShowA(true)}><Ic n="analytics" s={14}/> Relatório Gerencial</Btn>
           </div>
@@ -1690,7 +1798,7 @@ export default function App(){
               </div>
               {products.slice(0,6).map(p=>(
                 <div key={p.id} style={{padding:".4rem 0",borderBottom:"1px solid var(--sep)",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-                  <div style={{fontSize:".76rem",color:"var(--tx2)",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{CATS[p.category]||"📋"} {p.name}</div>
+                  <div style={{fontSize:".76rem",color:"var(--tx2)",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{(activeCats.find(c=>c.key===p.category)||{icon:"📋"}).icon} {p.name}</div>
                   <span style={{color:stkColor(p.stock_qty),fontWeight:700,fontSize:".78rem",flexShrink:0,marginLeft:".5rem"}}>{p.stock_qty} {p.unit||"un"}</span>
                 </div>
               ))}
@@ -1790,7 +1898,7 @@ export default function App(){
             );
           })()}
           <div style={{display:"flex",gap:".35rem",marginBottom:".65rem",overflowX:"auto"}}>
-            {cats.map(c=><button key={c} onClick={()=>setFcat(c)} style={{padding:".28rem .65rem",borderRadius:"99px",border:`1px solid ${fcat===c?"#4f5ef0":"var(--bdr2)"}`,background:fcat===c?"#4f5ef020":"transparent",color:fcat===c?"#4f5ef0":"var(--navoff)",fontSize:".7rem",fontFamily:"'DM Sans',sans-serif",fontWeight:600,whiteSpace:"nowrap"}}>{c==="all"?"Todos":`${CATS[c]||"📋"} ${c}`}</button>)}
+            {cats.map(c=><button key={c} onClick={()=>setFcat(c)} style={{padding:".28rem .65rem",borderRadius:"99px",border:`1px solid ${fcat===c?"#4f5ef0":"var(--bdr2)"}`,background:fcat===c?"#4f5ef020":"transparent",color:fcat===c?"#4f5ef0":"var(--navoff)",fontSize:".7rem",fontFamily:"'DM Sans',sans-serif",fontWeight:600,whiteSpace:"nowrap"}}>{c==="all"?"Todos":`${(activeCats.find(x=>x.key===c)||{icon:"📋",label:c}).icon} ${(activeCats.find(x=>x.key===c)||{label:c}).label}`}</button>)}
           </div>
           <div style={{display:"grid",gap:".6rem"}}>
             {fProds.map(p=>{
@@ -1800,7 +1908,11 @@ export default function App(){
                   <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",marginBottom:".55rem"}}>
                     <div style={{flex:1}}>
                       <div style={{display:"flex",alignItems:"center",gap:".38rem",flexWrap:"wrap",marginBottom:".2rem"}}>
-                        <span style={{fontFamily:"'Syne',sans-serif",fontWeight:700,fontSize:".88rem",color:"var(--tx)"}}>{CATS[p.category]||"📋"} {p.name}</span>
+                        <span style={{fontFamily:"'Syne',sans-serif",fontWeight:700,fontSize:".88rem",color:"var(--tx)"}}>{(activeCats.find(c=>c.key===p.category)||{icon:"📋"}).icon} {p.name}</span>
+                        {p.parent_product_id&&<Badge color="#8b44f0" sm>🧬 {products.find(x=>x.id===p.parent_product_id)?.name?.split(" ")[0]||"sub"}</Badge>}
+                        {products.some(x=>x.parent_product_id===p.id)&&<Badge color="#4f5ef0" sm>📦 {products.filter(x=>x.parent_product_id===p.id).length}x sub</Badge>}
+                      {p.total_mg&&<Badge color="#8b44f0" sm>💊 {p.total_mg}mg/un</Badge>}
+                      {p.dose_mg&&<Badge color="#8b44f0" sm>💊 {p.dose_mg}mg dose</Badge>}
                         <Badge color={stkColor(p.stock_qty)} sm>{p.stock_qty<=0?"Zerado":p.stock_qty<=(p.min_stock||5)?"Baixo":"OK"}</Badge>
                         {p.supplier_name&&<Badge color="#8b44f0" sm>🏭 {p.supplier_name}</Badge>}
                         {days!==null&&days<=30&&<Badge color={expColor(days)} sm>{days<0?"Vencido":`Vcto ${days}d`}</Badge>}
@@ -1945,7 +2057,7 @@ export default function App(){
                 <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",marginBottom:".55rem"}}>
                   <div>
                     <div style={{display:"flex",alignItems:"center",gap:".38rem",flexWrap:"wrap",marginBottom:".18rem"}}>
-                      <span style={{fontFamily:"'Syne',sans-serif",fontWeight:700,fontSize:".9rem",color:"var(--tx)"}}>{CATS[p.category]||"📋"} {p.name}</span>
+                      <span style={{fontFamily:"'Syne',sans-serif",fontWeight:700,fontSize:".9rem",color:"var(--tx)"}}>{(activeCats.find(c=>c.key===p.category)||{icon:"📋"}).icon} {p.name}</span>
                       {p.supplier_name&&<Badge color="#8b44f0" sm>🏭 {p.supplier_name}</Badge>}
                     </div>
                     <div style={{fontSize:".65rem",color:"var(--tx5)"}}>Cód: {p.code}{p.batch&&` · Lote: ${p.batch}`} · {p.unit||"un"}</div>
@@ -2094,7 +2206,7 @@ export default function App(){
               <h2 style={{fontFamily:"'Syne',sans-serif",fontWeight:800,fontSize:"1rem",color:"var(--tx)"}}>📦 Pedidos de Compra</h2>
               <div style={{display:"flex",gap:".4rem",flexWrap:"wrap"}}>
                 <XBtn rows={orders.map(o=>({Data:o.order_date,Fornecedor:o.supplier_name,Status:o.status,Total:fmt(o.total_value),"Sinal (%)":o.initial_pct+"%","Sinal R$":fmt(o.initial_value),Restante:fmt(o.remaining_value),Recebimento:o.received_date||"—"}))} name="pedidos-caixapro" sheet="Pedidos"/>
-                <Btn sm onClick={()=>setShowOrderModal(true)}><Ic n="plus" s={12}/>Novo Pedido</Btn>
+                <Btn sm onClick={()=>setShowOrderModal(true)}><Ic n="plus" s={12}/>Pedido de Compra</Btn>
               </div>
             </div>
             {/* KPIs pedidos */}
@@ -2268,10 +2380,461 @@ export default function App(){
           </div>
         )}
 
-        {tab==="usuarios"&&isAdmin&&(<>
+        {        {tab==="config"&&isAdmin&&(
+          <div style={{animation:"fadeUp .4s ease"}}>
+            {/* Config header */}
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:"1rem",flexWrap:"wrap",gap:".5rem"}}>
+              <h2 style={{fontFamily:"'Syne',sans-serif",fontWeight:800,fontSize:"1rem",color:"var(--tx)"}}>⚙️ Configurações do Sistema</h2>
+            </div>
+
+            {/* Config Nav Pills */}
+            <div style={{display:"flex",gap:".35rem",flexWrap:"wrap",marginBottom:"1rem",background:"var(--card)",borderRadius:".75rem",padding:".5rem"}}>
+              {[
+                {id:"usuarios",l:"👥 Usuários"},
+                {id:"fornecedores",l:"🏭 Fornecedores"},
+                {id:"cartoes",l:"💳 Taxas Cartão"},
+                {id:"frete",l:"📍 Frete"},
+                {id:"categorias",l:"🏷️ Categorias"},
+                {id:"pagamentos",l:"💰 Pagamentos"},
+                {id:"metas",l:"🎯 Metas"},
+                {id:"empresa",l:"🏢 Empresa"},
+                {id:"hierarquia",l:"🧬 Subprodutos"},
+              ].map(s=>(
+                <button key={s.id} onClick={()=>{if(s.id==="empresa"&&!localCI)setLocalCI({...companyInfo});if(s.id==="cartoes")setLocalTaxes(JSON.parse(JSON.stringify(cardTaxes)));if(s.id==="frete")setLocalFrete(JSON.parse(JSON.stringify(freteConfig)));setConfigSection(s.id);}}
+                  style={{padding:".38rem .75rem",borderRadius:".5rem",fontSize:".75rem",fontFamily:"'DM Sans',sans-serif",fontWeight:600,border:"none",background:configSection===s.id?"linear-gradient(135deg,#4f5ef0,#8b44f0)":"transparent",color:configSection===s.id?"#fff":"var(--navoff)",transition:"all .2s",whiteSpace:"nowrap"}}>
+                  {s.l}
+                </button>
+              ))}
+            </div>
+
+            {/* ── USUÁRIOS ── */}
+            {configSection==="usuarios"&&(
+              <div>
+                <div style={{display:"flex",justifyContent:"flex-end",marginBottom:".65rem"}}>
+                  <Btn sm onClick={()=>setModal("addUser")}><Ic n="plus" s={12}/>Novo Usuário</Btn>
+                </div>
+                <div style={{background:"var(--card)",border:"1px solid var(--bdr)",borderRadius:".75rem",overflow:"hidden"}}>
+                  {users.map(u=>(
+                    <div key={u.id} style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:".72rem 1rem",borderBottom:"1px solid var(--sep)"}}>
+                      <div>
+                        <div style={{fontWeight:700,fontSize:".83rem",color:"var(--tx)",display:"flex",alignItems:"center",gap:".4rem"}}>
+                          {u.display_name}
+                          <Badge color={u.role==="admin"?"#8b44f0":u.role==="operador"?"#4f5ef0":"#10b981"} sm>{u.role}</Badge>
+                          {!u.active&&<Badge color="#f56565" sm>inativo</Badge>}
+                        </div>
+                        <div style={{fontSize:".68rem",color:"var(--tx5)"}}>@{u.username} · último acesso: {u.last_login||"—"}</div>
+                      </div>
+                      <div style={{display:"flex",gap:".3rem"}}>
+                        {u.username!==cu.username&&<button onClick={()=>toggleUser(u.id,!u.active)} style={{background:"none",border:"none",color:u.active?"#f59e0b":"#10b981",padding:".2rem",cursor:"pointer",fontSize:".72rem",fontFamily:"'DM Sans',sans-serif",fontWeight:600}}>{u.active?"Desativar":"Ativar"}</button>}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* ── FORNECEDORES ── */}
+            {configSection==="fornecedores"&&(
+              <div>
+                <div style={{display:"flex",justifyContent:"flex-end",marginBottom:".65rem"}}>
+                  <Btn sm onClick={()=>setModal("addSupp")}><Ic n="plus" s={12}/>Novo Fornecedor</Btn>
+                </div>
+                <div style={{background:"var(--card)",border:"1px solid var(--bdr)",borderRadius:".75rem",overflow:"hidden"}}>
+                  {suppliers.length===0
+                    ?<p style={{textAlign:"center",color:"var(--tx5)",padding:"2rem",fontSize:".8rem"}}>Nenhum fornecedor cadastrado.</p>
+                    :suppliers.map(s=>(
+                    <div key={s.id} style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:".72rem 1rem",borderBottom:"1px solid var(--sep)"}}>
+                      <div>
+                        <div style={{fontWeight:700,fontSize:".83rem",color:"var(--tx)"}}>{s.name}</div>
+                        <div style={{fontSize:".68rem",color:"var(--tx5)"}}>{[s.phone,s.email,s.address].filter(Boolean).join(" · ")}</div>
+                      </div>
+                      <div style={{display:"flex",gap:".3rem"}}>
+                        <button onClick={()=>{setEditing({...s});setModal("editSupp");}} style={{background:"none",border:"none",color:"#4f5ef0",padding:".2rem"}}><Ic n="edit" s={13}/></button>
+                        <button onClick={()=>delSupp(s.id)} style={{background:"none",border:"none",color:"var(--tx6)",padding:".2rem"}}><Ic n="trash" s={13}/></button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* ── TAXAS CARTÃO ── */}
+            {configSection==="cartoes"&&(()=>{
+              const lt=localTaxes;const setLt=setLocalTaxes;
+              return(
+                <div>
+                  <div style={{background:"var(--infobox)",borderRadius:".45rem",padding:".5rem .85rem",marginBottom:".85rem",fontSize:".73rem",color:"#4f5ef0"}}>💡 Taxas por bandeira e modalidade. Afetam o valor líquido nas vendas.</div>
+                  <div style={{overflowX:"auto",marginBottom:"1rem"}}>
+                    <table style={{width:"100%",borderCollapse:"collapse",fontSize:".78rem"}}>
+                      <thead><tr style={{borderBottom:"2px solid var(--bdr)"}}>
+                        <th style={{textAlign:"left",padding:".5rem .6rem",color:"var(--sub)",fontSize:".68rem",textTransform:"uppercase"}}>Bandeira</th>
+                        {CARD_MODES.map(m=><th key={m.key} style={{textAlign:"center",padding:".5rem .4rem",color:"var(--sub)",fontSize:".68rem",textTransform:"uppercase"}}>{m.label}</th>)}
+                      </tr></thead>
+                      <tbody>
+                        {CARD_BRANDS.map(brand=>(
+                          <tr key={brand} style={{borderBottom:"1px solid var(--sep)"}}>
+                            <td style={{padding:".5rem .6rem",fontWeight:700,color:"var(--tx)"}}><span style={{background:"#4f5ef020",color:"#4f5ef0",borderRadius:".3rem",padding:".15rem .5rem",fontSize:".75rem"}}>{brand}</span></td>
+                            {CARD_MODES.map(mode=>(
+                              <td key={mode.key} style={{padding:".4rem"}}>
+                                <div style={{display:"flex",alignItems:"center",gap:".2rem"}}>
+                                  <input type="number" min="0" max="20" step="0.01" value={lt[brand]?.[mode.key]||""} onChange={e=>setLt(t=>({...t,[brand]:{...t[brand],[mode.key]:e.target.value}}))} style={{...IS,textAlign:"center",width:72,fontSize:".8rem"}}/>
+                                  <span style={{fontSize:".7rem",color:"var(--tx5)"}}>%</span>
+                                </div>
+                              </td>
+                            ))}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  <div style={{display:"flex",gap:".5rem",justifyContent:"flex-end"}}>
+                    <Btn v="ghost" onClick={()=>setLt(JSON.parse(JSON.stringify(DEFAULT_TAXES)))}>↩ Padrões</Btn>
+                    <Btn v="ok" onClick={()=>saveCardTaxes(lt)}><Ic n="save" s={13}/>Salvar Taxas</Btn>
+                  </div>
+                </div>
+              );
+            })()}
+
+            {/* ── FRETE ── */}
+            {configSection==="frete"&&(()=>{
+              const lf=localFrete||freteConfig;const setLf=setLocalFrete;
+              return(
+                <div>
+                  <div style={{fontFamily:"'Syne',sans-serif",fontWeight:700,fontSize:".85rem",color:"var(--tx)",marginBottom:".75rem"}}>📍 Pontos de Origem</div>
+                  {lf.origens.map((origem,oi)=>(
+                    <div key={origem.id} style={{background:"var(--pill)",borderRadius:".6rem",padding:".75rem .85rem",marginBottom:".6rem"}}>
+                      <div style={{display:"flex",gap:".4rem",marginBottom:".45rem",alignItems:"center"}}>
+                        <span style={{fontWeight:700,fontSize:".75rem",color:"#4f5ef0",minWidth:55}}>Ponto {oi+1}</span>
+                        <input value={origem.name} onChange={e=>setLf(f=>{const o=[...f.origens];o[oi]={...o[oi],name:e.target.value};return{...f,origens:o};})} placeholder="Nome do ponto" style={{...IS,flex:1,fontSize:".8rem"}}/>
+                        {origem.lat&&<span style={{fontSize:".65rem",color:"#10b981",background:"#10b98115",borderRadius:"99px",padding:".1rem .45rem",border:"1px solid #10b98130",whiteSpace:"nowrap"}}>✅ ok</span>}
+                      </div>
+                      <div style={{display:"flex",gap:".4rem",flexWrap:"wrap"}}>
+                        <input value={origem.address} onChange={e=>setLf(f=>{const o=[...f.origens];o[oi]={...o[oi],address:e.target.value,lat:null,lon:null};return{...f,origens:o};})} placeholder="Endereço completo, Cidade" style={{...IS,flex:1,fontSize:".78rem",minWidth:180}}/>
+                        <button onClick={async()=>{
+                          if(!origem.address.trim()){toast$("Informe o endereço.","#f56565");return;}
+                          toast$("🔍 Localizando...","#4f5ef0");
+                          try{
+                            const results=await geocodeAddr(origem.address);
+                            if(!results.length){toast$("Não encontrado. Inclua a cidade.","#f56565");return;}
+                            const first=results[0];
+                            setLf(f=>{const o=[...f.origens];o[oi]={...o[oi],lat:first.lat,lon:first.lon,address:first.display.split(",").slice(0,3).join(",").trim()};return{...f,origens:o};});
+                            toast$("✅ "+origem.name+" localizado!");
+                          }catch(e){toast$("Erro: "+e.message,"#f56565");}
+                        }} style={{background:"#4f5ef020",border:"1px solid #4f5ef040",borderRadius:".4rem",padding:".35rem .7rem",color:"#4f5ef0",fontSize:".74rem",fontFamily:"'DM Sans',sans-serif",fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}}>🔍 Localizar</button>
+                      </div>
+                    </div>
+                  ))}
+                  <div style={{fontFamily:"'Syne',sans-serif",fontWeight:700,fontSize:".85rem",color:"var(--tx)",marginTop:"1rem",marginBottom:".65rem"}}>💰 Valores de Cobrança</div>
+                  <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))",gap:".65rem",marginBottom:"1rem"}}>
+                    {[{l:"Base (R$)",k:"base",h:"Cobrado sempre"},{l:"Por km (R$/km)",k:"ratePerKm",h:"× distância"},{l:"Mínimo (R$)",k:"minFee",h:"0 = sem mínimo"},{l:"Máximo (R$)",k:"maxFee",h:"0 = sem teto"}].map(f=>(
+                      <div key={f.k}>
+                        <div style={{fontSize:".65rem",color:"var(--sub)",marginBottom:".28rem"}}>{f.l}</div>
+                        <input type="number" min="0" step="0.5" value={lf[f.k]||""} onChange={e=>setLf(v=>({...v,[f.k]:e.target.value}))} placeholder="0" style={IS}/>
+                        <div style={{fontSize:".6rem",color:"var(--tx6)",marginTop:".15rem"}}>{f.h}</div>
+                      </div>
+                    ))}
+                  </div>
+                  <div style={{background:"var(--pill)",borderRadius:".45rem",padding:".5rem .85rem",marginBottom:"1rem",display:"flex",justifyContent:"space-between",fontSize:".75rem"}}>
+                    <span style={{color:"var(--tx4)"}}>Prévia 10km:</span>
+                    <span style={{fontWeight:700,color:"#10b981"}}>{fmt(Math.max(parseFloat(lf.minFee)||0,Math.min(parseFloat(lf.maxFee)||999999,(parseFloat(lf.base)||0)+(10*(parseFloat(lf.ratePerKm)||0)))))}</span>
+                  </div>
+                  <div style={{display:"flex",justifyContent:"flex-end"}}>
+                    <Btn v="ok" onClick={()=>saveFreteConfig(lf)}><Ic n="save" s={13}/>Salvar Configurações de Frete</Btn>
+                  </div>
+                </div>
+              );
+            })()}
+
+            {/* ── CATEGORIAS ── */}
+            {configSection==="categorias"&&(
+              <div>
+                <div style={{background:"var(--infobox)",borderRadius:".45rem",padding:".5rem .85rem",marginBottom:".85rem",fontSize:".73rem",color:"#4f5ef0"}}>🏷️ Categorias aparecem no cadastro de produtos e nos filtros de estoque.</div>
+                <div style={{background:"var(--card)",border:"1px solid var(--bdr)",borderRadius:".75rem",marginBottom:".75rem",overflow:"hidden"}}>
+                  {activeCats.map((cat,i)=>(
+                    <div key={cat.key} style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:".65rem 1rem",borderBottom:"1px solid var(--sep)"}}>
+                      <div style={{display:"flex",alignItems:"center",gap:".6rem"}}>
+                        <span style={{fontSize:"1.1rem"}}>{cat.icon}</span>
+                        <div>
+                          <div style={{fontWeight:700,fontSize:".83rem",color:"var(--tx)"}}>{cat.label}</div>
+                          <div style={{fontSize:".65rem",color:"var(--tx5)"}}>chave: {cat.key}</div>
+                        </div>
+                      </div>
+                      {i>=5&&<button onClick={()=>saveCategories(activeCats.filter((_,j)=>j!==i))} style={{background:"none",border:"none",color:"var(--tx6)",cursor:"pointer",padding:".2rem"}}><Ic n="trash" s={13}/></button>}
+                      {i<5&&<span style={{fontSize:".65rem",color:"var(--tx6)"}}>padrão</span>}
+                    </div>
+                  ))}
+                </div>
+                <div style={{background:"var(--card)",border:"1px solid var(--bdr)",borderRadius:".75rem",padding:"1rem"}}>
+                  <div style={{fontWeight:700,fontSize:".8rem",color:"var(--tx2)",marginBottom:".65rem"}}>➕ Nova Categoria</div>
+                  <div style={{display:"grid",gridTemplateColumns:"80px 1fr",gap:".5rem",marginBottom:".5rem"}}>
+                    <div>
+                      <div style={{fontSize:".65rem",color:"var(--sub)",marginBottom:".28rem"}}>Ícone (emoji)</div>
+                      <input value={newCatIcon} onChange={e=>setNewCatIcon(e.target.value)} placeholder="📦" style={{...IS,fontSize:"1.2rem",textAlign:"center"}} maxLength={2}/>
+                    </div>
+                    <div>
+                      <div style={{fontSize:".65rem",color:"var(--sub)",marginBottom:".28rem"}}>Nome da categoria</div>
+                      <input value={newCatName} onChange={e=>setNewCatName(e.target.value)} placeholder="Ex: Vitaminas, Canetas..." style={{...IS,fontSize:".85rem"}}/>
+                    </div>
+                  </div>
+                  <Btn v="ok" onClick={()=>{
+                    if(!newCatName.trim()){toast$("Informe o nome.","#f56565");return;}
+                    const key=newCatName.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g,"").replace(/\s+/g,"_").replace(/[^a-z0-9_]/g,"");
+                    if(activeCats.find(c=>c.key===key)){toast$("Categoria já existe.","#f56565");return;}
+                    saveCategories([...activeCats,{key,label:newCatName.trim(),icon:newCatIcon||"📦"}]);
+                    setNewCatName("");setNewCatIcon("📦");
+                  }}><Ic n="plus" s={13}/>Adicionar Categoria</Btn>
+                </div>
+              </div>
+            )}
+
+            {/* ── FORMAS DE PAGAMENTO ── */}
+            {configSection==="pagamentos"&&(
+              <div>
+                <div style={{background:"var(--infobox)",borderRadius:".45rem",padding:".5rem .85rem",marginBottom:".85rem",fontSize:".73rem",color:"#4f5ef0"}}>💰 Formas de pagamento adicionais aparecem no seletor de Nova Venda (além de Débito, Crédito e Parcelado que são fixos).</div>
+                <div style={{background:"var(--card)",border:"1px solid var(--bdr)",borderRadius:".75rem",marginBottom:".75rem",overflow:"hidden"}}>
+                  {activePays.map((pay,i)=>(
+                    <div key={pay} style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:".6rem 1rem",borderBottom:"1px solid var(--sep)"}}>
+                      <span style={{fontWeight:600,fontSize:".83rem",color:"var(--tx)"}}>{pay}</span>
+                      {["Débito","Crédito à Vista","Crédito Parcelado"].includes(pay)
+                        ?<span style={{fontSize:".65rem",color:"var(--tx6)"}}>fixo</span>
+                        :<button onClick={()=>savePayments(activePays.filter(p=>p!==pay))} style={{background:"none",border:"none",color:"var(--tx6)",cursor:"pointer",padding:".2rem"}}><Ic n="trash" s={13}/></button>
+                      }
+                    </div>
+                  ))}
+                </div>
+                <div style={{background:"var(--card)",border:"1px solid var(--bdr)",borderRadius:".75rem",padding:"1rem"}}>
+                  <div style={{fontWeight:700,fontSize:".8rem",color:"var(--tx2)",marginBottom:".65rem"}}>➕ Nova Forma de Pagamento</div>
+                  <div style={{display:"flex",gap:".5rem"}}>
+                    <input value={newPayName} onChange={e=>setNewPayName(e.target.value)} placeholder="Ex: Cheque, Boleto, Crediário..." style={{...IS,flex:1,fontSize:".85rem"}}/>
+                    <Btn v="ok" onClick={()=>{
+                      if(!newPayName.trim()){toast$("Informe o nome.","#f56565");return;}
+                      if(activePays.includes(newPayName.trim())){toast$("Já existe.","#f56565");return;}
+                      savePayments([...activePays,newPayName.trim()]);
+                      setNewPayName("");
+                    }}><Ic n="plus" s={13}/>Adicionar</Btn>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* ── METAS ── */}
+            {configSection==="metas"&&(()=>{
+              const MONTHS=["Janeiro","Fevereiro","Março","Abril","Maio","Junho","Julho","Agosto","Setembro","Outubro","Novembro","Dezembro"];
+              const gYear=goalYear;const setGYear=setGoalYear;
+              const rows=MONTHS.map((mName,mi)=>{
+                const key=gYear+"-"+(mi+1).toString().padStart(2,"0");
+                const goal=monthlyGoals[key]||0;
+                const mStart=new Date(gYear,mi,1);const mEnd=new Date(gYear,mi+1,0,23,59,59);
+                const real=batchRevenue(sales.filter(s=>{const d=new Date(s.created_at);return d>=mStart&&d<=mEnd;}));
+                const pct=goal>0?Math.min((real/goal)*100,100):0;
+                const isCurrent=new Date().getFullYear()===gYear&&new Date().getMonth()===mi;
+                const isPast=new Date(gYear,mi+1,1)<new Date();
+                return{key,mName,mi,goal,real,pct,isCurrent,isPast};
+              });
+              const totalGoal=rows.reduce((a,r)=>a+r.goal,0);
+              const totalReal=rows.reduce((a,r)=>a+r.real,0);
+              return(
+                <div>
+                  <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:"1rem"}}>
+                    <div style={{display:"flex",alignItems:"center",gap:".5rem"}}>
+                      <button onClick={()=>setGYear(y=>y-1)} style={{background:"var(--pill)",border:"1px solid var(--bdr2)",borderRadius:".4rem",padding:".3rem .65rem",color:"var(--tx)",cursor:"pointer",fontFamily:"'DM Sans',sans-serif",fontWeight:600}}>‹</button>
+                      <span style={{fontFamily:"'Syne',sans-serif",fontWeight:800,fontSize:"1rem",color:"var(--tx)",minWidth:50,textAlign:"center"}}>{gYear}</span>
+                      <button onClick={()=>setGYear(y=>y+1)} style={{background:"var(--pill)",border:"1px solid var(--bdr2)",borderRadius:".4rem",padding:".3rem .65rem",color:"var(--tx)",cursor:"pointer",fontFamily:"'DM Sans',sans-serif",fontWeight:600}}>›</button>
+                    </div>
+                    <div style={{display:"flex",gap:".75rem",fontSize:".75rem"}}>
+                      <div style={{textAlign:"right"}}><div style={{color:"var(--tx5)",fontSize:".62rem"}}>Meta anual</div><div style={{fontWeight:700,color:"#4f5ef0",fontFamily:"'Syne',sans-serif"}}>{fmt(totalGoal)}</div></div>
+                      <div style={{textAlign:"right"}}><div style={{color:"var(--tx5)",fontSize:".62rem"}}>Realizado</div><div style={{fontWeight:700,color:"#10b981",fontFamily:"'Syne',sans-serif"}}>{fmt(totalReal)}</div></div>
+                    </div>
+                  </div>
+                  <div style={{display:"grid",gap:".5rem"}}>
+                    {rows.map(r=>(
+                      <div key={r.key} style={{background:r.isCurrent?"linear-gradient(135deg,#4f5ef010,#10b98108)":"var(--card)",border:"1px solid "+(r.isCurrent?"#4f5ef040":"var(--bdr)"),borderRadius:".6rem",padding:".65rem .85rem"}}>
+                        <div style={{display:"flex",alignItems:"center",gap:".5rem",marginBottom:".3rem"}}>
+                          <span style={{fontWeight:700,fontSize:".82rem",color:r.isCurrent?"#4f5ef0":"var(--tx)",minWidth:90}}>{r.mName}</span>
+                          {r.isCurrent&&<span style={{fontSize:".6rem",background:"#4f5ef020",color:"#4f5ef0",borderRadius:"99px",padding:".1rem .4rem",fontWeight:700}}>atual</span>}
+                          <div style={{flex:1}}/>
+                          <span style={{fontSize:".75rem",color:r.real>=r.goal&&r.goal>0?"#10b981":"var(--tx3)",fontWeight:600}}>{fmt(r.real)}</span>
+                          <span style={{fontSize:".65rem",color:"var(--tx5)"}}>de</span>
+                          <div style={{fontSize:".85rem",fontWeight:700,color:"#4f5ef0",fontFamily:"'Syne',sans-serif",minWidth:90,textAlign:"right"}}>{r.goal>0?fmt(r.goal):<span style={{color:"var(--tx6)",fontSize:".72rem"}}>—</span>}</div>
+                          <span style={{fontSize:".72rem",fontWeight:700,color:r.pct>=100?"#10b981":r.pct>=70?"#f59e0b":r.isPast&&r.goal>0?"#f56565":"var(--tx5)",minWidth:42,textAlign:"right"}}>{r.goal>0?fmtPct(r.pct):"—"}{r.pct>=100?" 🏆":""}</span>
+                        </div>
+                        <div style={{height:5,background:"var(--bdr)",borderRadius:3}}>
+                          <div style={{height:"100%",width:r.pct+"%",background:r.pct>=100?"linear-gradient(90deg,#10b981,#059669)":r.pct>=70?"linear-gradient(90deg,#f59e0b,#d97706)":"linear-gradient(90deg,#4f5ef0,#8b44f0)",borderRadius:3,transition:"width .5s"}}/>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })()}
+
+            {/* ── HIERARQUIA ── */}
+            {configSection==="hierarquia"&&(
+              <div>
+                <div style={{background:"var(--infobox)",borderRadius:".45rem",padding:".5rem .85rem",marginBottom:".85rem",fontSize:".73rem",color:"#8b44f0"}}>
+                  🧬 Defina qual produto é subproduto de qual. Vendas de subprodutos deduzem o estoque do produto pai automaticamente.
+                </div>
+                {products.length===0
+                  ?<p style={{color:"var(--tx5)",textAlign:"center",padding:"2rem"}}>Nenhum produto cadastrado.</p>
+                  :(()=>{
+                    const roots=products.filter(p=>!p.parent_product_id);
+                    const renderTree=(prod,depth)=>{
+                      const children=products.filter(p=>p.parent_product_id===prod.id);
+                      const totalSubStock=children.reduce((a,c)=>a+c.stock_qty,0);
+                      return(
+                        <div key={prod.id} style={{marginLeft:depth>0?"1.5rem":0}}>
+                          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:".6rem .85rem",borderRadius:".55rem",border:"1px solid "+(depth===0?"#4f5ef040":depth===1?"#8b44f030":"var(--bdr)"),background:depth===0?"#4f5ef008":depth===1?"#8b44f008":"transparent",marginBottom:".3rem"}}>
+                            <div style={{display:"flex",alignItems:"center",gap:".5rem"}}>
+                              {depth>0&&<span style={{color:"var(--tx5)",fontSize:".8rem"}}>{"└".repeat(depth)}</span>}
+                              <div>
+                                <div style={{fontWeight:700,fontSize:".82rem",color:"var(--tx)"}}>{prod.name}</div>
+                                <div style={{fontSize:".65rem",color:"var(--tx5)"}}>
+                                {prod.unit||"un"} · estoque: {prod.stock_qty}
+                                {prod.total_mg&&<span style={{color:"#8b44f0"}}> · {prod.total_mg}mg/un · {(prod.stock_qty*prod.total_mg).toFixed(1)}mg total</span>}
+                                {prod.dose_mg&&<span style={{color:"#8b44f0"}}> · dose: {prod.dose_mg}mg = {prod.qty_per_parent}x/pai</span>}
+                              </div>
+                              </div>
+                            </div>
+                            <div style={{display:"flex",alignItems:"center",gap:".5rem"}}>
+                              {children.length>0&&<Badge color="#4f5ef0" sm>{children.length} sub</Badge>}
+                              <span style={{fontWeight:700,color:prod.stock_qty<=(prod.min_stock||5)?"#f56565":"#10b981",fontFamily:"'Syne',sans-serif",fontSize:".82rem"}}>{prod.stock_qty} {prod.unit||"un"}</span>
+                            </div>
+                          </div>
+                          {children.map(child=>renderTree(child,depth+1))}
+                        </div>
+                      );
+                    };
+                    return <div style={{display:"grid",gap:".25rem"}}>{roots.map(p=>renderTree(p,0))}</div>;
+                  })()
+                }
+                <div style={{background:"var(--card)",border:"1px solid var(--bdr)",borderRadius:".75rem",padding:"1rem",marginTop:"1rem"}}>
+                  <div style={{fontWeight:700,fontSize:".8rem",color:"var(--tx2)",marginBottom:".65rem"}}>ℹ️ Como usar</div>
+                  <div style={{fontSize:".75rem",color:"var(--tx4)",lineHeight:1.6}}>
+                    <div>1. Cadastre o produto principal (ex: Caixa T.G.) normalmente</div>
+                    <div>2. Cadastre o subproduto (ex: Fração 2,5mg) → selecione produto pai (Ampola) → informe a <strong>dose em mg</strong> (2,5mg) → o sistema calcula automaticamente que cabem {"{"}15÷2,5=6{"}"} doses</div>
+                    <div>3. Vender 1 Ampola deduzirá 1 do estoque de Ampola e 0.25 do estoque de Caixa (1÷4)</div>
+                    <div>4. Ao receber um Pedido de Compra de Caixas, o sistema expande automaticamente o estoque de Ampolas</div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* ── EMPRESA ── */}
+            {configSection==="empresa"&&(()=>{
+              const ci=localCI||companyInfo;const setCi=setLocalCI;
+              return(
+                <div>
+                  <div style={{background:"var(--infobox)",borderRadius:".45rem",padding:".5rem .85rem",marginBottom:".85rem",fontSize:".73rem",color:"#4f5ef0"}}>🏢 Informações aparecem nos PDFs gerados pelo sistema.</div>
+                  <div style={{display:"grid",gap:".65rem",marginBottom:"1rem"}}>
+                    <Inp label="Nome da Empresa *" value={ci.name} onChange={e=>setCi(v=>({...v,name:e.target.value}))} placeholder="Ex: CaixaPro · Tirzepatida"/>
+                    <R2>
+                      <Inp label="Telefone / WhatsApp" value={ci.phone||""} onChange={e=>setCi(v=>({...v,phone:e.target.value}))} placeholder="(xx) xxxxx-xxxx"/>
+                      <Inp label="CNPJ / CPF" value={ci.cnpj||""} onChange={e=>setCi(v=>({...v,cnpj:e.target.value}))} placeholder="xx.xxx.xxx/xxxx-xx"/>
+                    </R2>
+                    <Inp label="Endereço" value={ci.address||""} onChange={e=>setCi(v=>({...v,address:e.target.value}))} placeholder="Rua, Nº, Bairro, Cidade - UF"/>
+                    <Inp label="Observação no rodapé dos PDFs" hint="opcional" value={ci.obs||""} onChange={e=>setCi(v=>({...v,obs:e.target.value}))} placeholder="Ex: Atendemos apenas com agendamento..."/>
+                  <div style={{display:"flex",alignItems:"center",gap:".6rem",padding:".65rem .85rem",background:"var(--pill)",borderRadius:".5rem"}}>
+                    <button onClick={()=>setCi(v=>({...v,showInPDF:!v.showInPDF}))} style={{width:38,height:22,borderRadius:11,border:"none",background:ci.showInPDF!==false?"linear-gradient(135deg,#4f5ef0,#8b44f0)":"var(--bdr2)",transition:"background .2s",cursor:"pointer",position:"relative"}}>
+                      <span style={{position:"absolute",top:3,left:ci.showInPDF!==false?18:3,width:16,height:16,borderRadius:"50%",background:"#fff",transition:"left .2s",display:"block"}}/>
+                    </button>
+                    <div>
+                      <div style={{fontSize:".78rem",fontWeight:600,color:"var(--tx)"}}>Exibir dados da empresa nos PDFs</div>
+                      <div style={{fontSize:".65rem",color:"var(--tx5)"}}>{ci.showInPDF!==false?"Cabeçalho com nome/telefone/endereço nos documentos":"PDFs sem identificação da empresa"}</div>
+                    </div>
+                  </div>
+                  </div>
+                  {ci.name&&(
+                    <div style={{background:"var(--pill)",borderRadius:".5rem",padding:".75rem",marginBottom:"1rem",fontSize:".75rem"}}>
+                      <div style={{fontWeight:700,color:"var(--tx2)",marginBottom:".35rem",fontSize:".7rem"}}>Prévia do cabeçalho nos PDFs:</div>
+                      <div style={{fontWeight:700,color:"var(--tx)"}}>{ci.name}</div>
+                      {ci.phone&&<div style={{color:"var(--tx4)"}}>{ci.phone}</div>}
+                      {ci.address&&<div style={{color:"var(--tx4)"}}>{ci.address}</div>}
+                      {ci.cnpj&&<div style={{color:"var(--tx5)"}}>CNPJ: {ci.cnpj}</div>}
+                    </div>
+                  )}
+                  <div style={{display:"flex",justifyContent:"flex-end"}}>
+                    <Btn v="ok" onClick={()=>{saveCompanyInfo(ci);setLocalCI(null);}}><Ic n="save" s={13}/>Salvar Informações da Empresa</Btn>
+                  </div>
+                </div>
+              );
+            })()}
+          </div>
+        )}
+
+
+        {/* ══ A RECEBER ══ */}
+        {tab==="recebiveis"&&(
+          <div style={{animation:"fadeUp .4s ease"}}>
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:".75rem",flexWrap:"wrap",gap:".5rem"}}>
+              <h2 style={{fontFamily:"'Syne',sans-serif",fontWeight:800,fontSize:"1rem",color:"var(--tx)"}}>💰 Contas a Receber</h2>
+              <XBtn rows={receivables.map(r=>({Cliente:r.client_name||"—",Descrição:r.description,Valor:fmt(r.value),Vencimento:r.due_date||"—",Status:r.paid?"Recebido":"Pendente"}))} name="recebiveis-caixapro" sheet="A Receber"/>
+            </div>
+            <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:".6rem",marginBottom:".75rem"}}>
+              <KCard label="Em aberto" value={fmtN(receivables.filter(r=>!r.paid).length)} sub={fmt(receivables.filter(r=>!r.paid).reduce((a,r)=>a+r.value,0))} color="#4f5ef0"/>
+              <KCard label="Vencidas" value={fmtN(receivables.filter(r=>!r.paid&&r.due_date&&new Date(r.due_date)<new Date()).length)} sub={fmt(receivables.filter(r=>!r.paid&&r.due_date&&new Date(r.due_date)<new Date()).reduce((a,r)=>a+r.value,0))} color="#f56565"/>
+              <KCard label="Recebido total" value={fmt(receivables.filter(r=>r.paid).reduce((a,r)=>a+r.value,0))} color="#10b981"/>
+            </div>
+            <div style={{background:"var(--card)",border:"1px solid var(--bdr)",borderRadius:".75rem",padding:"1rem",marginBottom:".75rem"}}>
+              <div style={{fontFamily:"'Syne',sans-serif",fontWeight:700,fontSize:".8rem",color:"var(--tx2)",marginBottom:".65rem"}}>➕ Nova conta a receber</div>
+              <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))",gap:".5rem",marginBottom:".5rem"}}>
+                <div>
+                  <div style={{fontSize:".68rem",color:"var(--sub)",textTransform:"uppercase",marginBottom:".3rem"}}>Cliente</div>
+                  <select value={recForm.client_id} onChange={e=>{const c=clients.find(x=>x.id===e.target.value);setRecForm(f=>({...f,client_id:e.target.value,client_name:c?c.name:""}));}} style={IS}>
+                    <option value="">Selecione...</option>
+                    {clients.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <div style={{fontSize:".68rem",color:"var(--sub)",textTransform:"uppercase",marginBottom:".3rem"}}>Vencimento</div>
+                  <input type="date" value={recForm.due_date} onChange={e=>setRecForm(f=>({...f,due_date:e.target.value}))} style={IS}/>
+                </div>
+              </div>
+              <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(140px,1fr))",gap:".5rem",marginBottom:".65rem"}}>
+                <div>
+                  <div style={{fontSize:".68rem",color:"var(--sub)",textTransform:"uppercase",marginBottom:".3rem"}}>Descrição *</div>
+                  <input value={recForm.description||""} onChange={e=>setRecForm(f=>({...f,description:e.target.value}))} placeholder="Ex: Venda parcelada, fiado..." style={IS}/>
+                </div>
+                <div>
+                  <div style={{fontSize:".68rem",color:"var(--sub)",textTransform:"uppercase",marginBottom:".3rem"}}>Valor (R$) *</div>
+                  <input type="number" min="0" step="0.01" value={recForm.value||""} onChange={e=>setRecForm(f=>({...f,value:e.target.value}))} placeholder="0,00" style={IS}/>
+                </div>
+              </div>
+              <Btn v="ok" onClick={addReceivable}><Ic n="save" s={13}/>Registrar</Btn>
+            </div>
+            <div style={{background:"var(--card)",border:"1px solid var(--bdr)",borderRadius:".75rem",overflow:"hidden"}}>
+              {receivables.length===0
+                ?<p style={{color:"var(--tx5)",textAlign:"center",padding:"2.5rem 0",fontSize:".8rem"}}>Nenhuma conta registrada. Use o formulário acima para registrar.</p>
+                :receivables.map(r=>{
+                  const ov=!r.paid&&r.due_date&&new Date(r.due_date)<new Date();
+                  const dv=r.due_date?Math.ceil((new Date(r.due_date+"T23:59:59")-new Date())/86400000):null;
+                  return(
+                    <div key={r.id} style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:".72rem 1rem",borderBottom:"1px solid var(--sep)",background:ov?"#f5656508":"transparent"}}>
+                      <div style={{flex:1,minWidth:0}}>
+                        <div style={{display:"flex",alignItems:"center",gap:".4rem",marginBottom:".15rem",flexWrap:"wrap"}}>
+                          <span style={{fontWeight:700,fontSize:".83rem",color:r.paid?"var(--tx5)":"var(--tx)",textDecoration:r.paid?"line-through":"none"}}>{r.description}</span>
+                          {r.paid&&<Badge color="#10b981" sm>✅ Recebido</Badge>}
+                          {ov&&<Badge color="#f56565" sm>⚠️ Vencido</Badge>}
+                          {!r.paid&&!ov&&dv!==null&&dv<=3&&<Badge color="#f59e0b" sm>{"⏰ Vence em "+dv+"d"}</Badge>}
+                        </div>
+                        <div style={{fontSize:".67rem",color:"var(--tx5)"}}>{r.client_name||"Sem cliente"}{r.due_date&&" · Vcto: "+new Date(r.due_date+"T00:00:00").toLocaleDateString("pt-BR")}{r.paid_date&&" · Pago: "+r.paid_date}</div>
+                      </div>
+                      <div style={{display:"flex",alignItems:"center",gap:".55rem",flexShrink:0,marginLeft:".75rem"}}>
+                        <span style={{fontWeight:700,fontFamily:"'Syne',sans-serif",color:r.paid?"#10b981":ov?"#f56565":"#f59e0b",fontSize:".9rem"}}>{fmt(r.value)}</span>
+                        {!r.paid&&<button onClick={()=>payReceivable(r.id)} style={{background:"#10b98115",border:"1px solid #10b98130",borderRadius:".4rem",padding:".28rem .6rem",color:"#10b981",fontSize:".72rem",fontFamily:"'DM Sans',sans-serif",fontWeight:600,cursor:"pointer"}}>✅ Recebido</button>}
+                        <button onClick={()=>deleteReceivable(r.id)} style={{background:"none",border:"none",color:"var(--tx6)",padding:".2rem",cursor:"pointer"}}><Ic n="trash" s={13}/></button>
+                      </div>
+                    </div>
+                  );
+                })
+              }
+            </div>
+          </div>
+        )}
+
+        {tab==="config"&&isAdmin&&(<>
           <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:".75rem"}}>
             <h2 style={{fontFamily:"'Syne',sans-serif",fontWeight:800,fontSize:"1rem",color:"var(--tx)"}}>Usuários</h2>
-            <Btn sm onClick={()=>setModal("addUser")}><Ic n="plus" s={12}/>Novo</Btn>
+            <Btn sm onClick={()=>setConfigSection("usuarios");setModal("addUser")}><Ic n="plus" s={12}/>Novo</Btn>
           </div>
           <div style={{background:"var(--card)",border:"1px solid var(--bdr)",borderRadius:".75rem",overflow:"hidden"}}>
             {appUsers.map(u=>(
@@ -2335,7 +2898,7 @@ export default function App(){
                 <option value="">Selecione...</option>
                 {products.map(p=>(
                   <option key={p.id} value={p.id} disabled={p.stock_qty<=0}>
-                    {CATS[p.category]||"📋"} {p.name} {p.stock_qty<=0?"(zerado)":`(${p.stock_qty} ${p.unit||"un"})`}
+                    {(activeCats.find(c=>c.key===p.category)||{icon:"📋"}).icon} {p.name} {p.stock_qty<=0?"(zerado)":`(${p.stock_qty} ${p.unit||"un"})`}
                   </option>
                 ))}
               </select>
@@ -2526,7 +3089,7 @@ export default function App(){
             <div style={{fontSize:".68rem",color:"var(--sub)",textTransform:"uppercase",letterSpacing:".06em",marginBottom:".3rem"}}>Forma de Pagamento</div>
             <select value={cartPayment} onChange={e=>setCartPayment(e.target.value)} style={IS}>
               <optgroup label="Sem taxa">
-                {PAYS_SIMPLES.map(m=><option key={m} value={m}>{m}</option>)}
+                {activeSimplePays.map(m=><option key={m} value={m}>{m}</option>)}
               </optgroup>
               <optgroup label="Cartão">
                 <option value="Débito">Débito</option>
@@ -2659,7 +3222,7 @@ export default function App(){
       <Modal title="Entrada de Estoque" onClose={()=>setModal(null)} icon="stock">
         <div style={{background:"var(--infobox)",borderRadius:".45rem",padding:".55rem .8rem",marginBottom:".8rem",fontSize:".73rem",color:"#10b981",display:"flex",gap:".3rem",alignItems:"center"}}><Ic n="arrup" s={12}/>Entrada gera saída no caixa (custo de compra)</div>
         <Sel label="Produto *" value={stF.product_id} onChange={e=>setStF(s=>({...s,product_id:e.target.value}))}>
-          <option value="">Selecione...</option>{products.map(p=><option key={p.id} value={p.id}>{CATS[p.category]||"📋"} {p.name} — Atual: {p.stock_qty} {p.unit||"un"}</option>)}
+          <option value="">Selecione...</option>{products.map(p=><option key={p.id} value={p.id}>{(activeCats.find(c=>c.key===p.category)||{icon:"📋"}).icon} {p.name} — Atual: {p.stock_qty} {p.unit||"un"}</option>)}
         </Sel>
         <R2><Inp label={`Quantidade * (${stF.product_id?products.find(p=>p.id===stF.product_id)?.unit||"un":"un"})`} type="number" min="1" placeholder="Ex: 10" value={stF.qty} onChange={e=>setStF(s=>({...s,qty:e.target.value}))}/><Inp label="Custo total (R$)" hint="opcional" type="number" min="0" step="0.01" placeholder="0,00" value={stF.cost_total} onChange={e=>setStF(s=>({...s,cost_total:e.target.value}))}/></R2>
         {stF.product_id&&stF.qty&&parseInt(stF.qty)>0&&(()=>{const p=products.find(x=>x.id===stF.product_id);return <div style={{background:"#0e1e0e",borderRadius:".45rem",padding:".55rem .8rem",marginBottom:".8rem",fontSize:".76rem",color:"#10b981"}}>✅ +{stF.qty} {p?.unit||"un"} → novo estoque: {(p?.stock_qty||0)+parseInt(stF.qty)}</div>})()}
@@ -2690,7 +3253,7 @@ export default function App(){
         <Sel label="Tipo" value={editing.type} onChange={e=>setEditing(v=>({...v,type:e.target.value}))}><option value="entrada">📈 Entrada</option><option value="saida">📉 Saída</option></Sel>
         <Inp label="Descrição *" value={editing.description} onChange={e=>setEditing(v=>({...v,description:e.target.value}))}/>
         <Inp label="Valor (R$) *" type="number" min="0" step="0.01" value={editing.value} onChange={e=>setEditing(v=>({...v,value:e.target.value}))}/>
-        <Inp label="Categoria" value={editing.category||""} onChange={e=>setEditing(v=>({...v,category:e.target.value}))}/>
+        <Sel label="Categoria" value={editing.category||"outro"} onChange={e=>setEditing(v=>({...v,category:e.target.value}))}>{activeCats.map(c=><option key={c.key} value={c.key}>{c.icon} {c.label}</option>)}</Sel>
         <div style={{display:"flex",gap:".5rem",justifyContent:"space-between"}}>
           {isAdmin&&<Btn v="del" sm onClick={()=>{deleteCash(editing.id);setModal(null);setEditing(null);}}><Ic n="trash" s={12}/>Excluir</Btn>}
           <div style={{display:"flex",gap:".5rem",marginLeft:"auto"}}><Btn v="ghost" onClick={()=>{setModal(null);setEditing(null);}}>Cancelar</Btn><Btn v="ok" onClick={updateCash}><Ic n="save" s={13}/>Salvar</Btn></div>
@@ -2701,13 +3264,70 @@ export default function App(){
     {/* Novo produto */}
     {modal==="produto"&&(
       <Modal title="Novo Produto" onClose={()=>setModal(null)} icon="product" wide>
-        <R2><Inp label="Código" hint="auto" placeholder="PRD-001" value={pf.code} onChange={e=>setPf(f=>({...f,code:e.target.value}))}/><Sel label="Categoria" value={pf.category} onChange={e=>setPf(f=>({...f,category:e.target.value}))}><option value="tirzepatida">💉 Tirzepatida</option><option value="seringa">🩺 Seringa/Agulha</option><option value="material">🧊 Material</option><option value="embalagem">📦 Embalagem</option><option value="outro">📋 Outro</option></Sel></R2>
+        <R2><Inp label="Código" hint="auto" placeholder="PRD-001" value={pf.code} onChange={e=>setPf(f=>({...f,code:e.target.value}))}/><Sel label="Categoria" value={pf.category} onChange={e=>setPf(f=>({...f,category:e.target.value}))}>{activeCats.map(c=><option key={c.key} value={c.key}>{c.icon} {c.label}</option>)}</Sel></R2>
+      <div style={{borderTop:"1px solid var(--bdr)",paddingTop:".75rem",marginTop:".25rem"}}>
+        <div style={{fontSize:".72rem",color:"#8b44f0",fontWeight:700,marginBottom:".5rem",display:"flex",alignItems:"center",gap:".35rem"}}>🧬 Hierarquia (opcional) — vincula a um produto principal</div>
+        <R2>
+          <div>
+            <div style={{fontSize:".65rem",color:"var(--sub)",marginBottom:".28rem"}}>Produto principal (pai)</div>
+            <select value={pf.parent_product_id||""} onChange={e=>setPf(f=>({...f,parent_product_id:e.target.value||null}))} style={IS}>
+              <option value="">Produto independente</option>
+              {products.filter(p=>!p.parent_product_id).map(p=><option key={p.id} value={p.id}>{p.name}</option>)}
+            </select>
+          </div>
+          <Inp label={"Qtd por "+((pf.parent_product_id&&products.find(p=>p.id===pf.parent_product_id)?.name)||"produto pai")} type="number" min="0.001" step="0.001" hint="ex: 4 ampolas/caixa" value={pf.qty_per_parent||""} onChange={e=>setPf(f=>({...f,qty_per_parent:e.target.value}))} disabled={!pf.parent_product_id}/>
+        </R2>
+        {/* Se produto pai tem total_mg, mostra campo dose_mg e calcula qty_per_parent */}
+        {pf.parent_product_id&&(()=>{
+          const parentProd=products.find(p=>p.id===pf.parent_product_id);
+          const parentMg=parseFloat(parentProd?.total_mg)||0;
+          const doseMg=parseFloat(pf.dose_mg)||0;
+          const autoQty=parentMg>0&&doseMg>0?parentMg/doseMg:null;
+          if(autoQty)pf.qty_per_parent=autoQty.toString();
+          return(<>
+            {parentMg>0&&(
+              <div style={{marginTop:".45rem"}}>
+                <div style={{fontSize:".65rem",color:"#8b44f0",marginBottom:".28rem",fontWeight:700}}>💊 Dose desta fração</div>
+                <div style={{display:"flex",gap:".5rem",alignItems:"center"}}>
+                  <input type="number" min="0.001" step="0.001" value={pf.dose_mg||""} onChange={e=>{setPf(f=>({...f,dose_mg:e.target.value,qty_per_parent:parentMg>0&&e.target.value?String(parentMg/parseFloat(e.target.value)):""}));}} placeholder="Ex: 2.5" style={{...IS,width:100,fontWeight:700,color:"#8b44f0",fontSize:".9rem"}}/>
+                  <span style={{fontSize:".82rem",color:"var(--tx4)"}}>mg</span>
+                  {pf.dose_mg&&parentMg>0&&parseFloat(pf.dose_mg)>0&&(
+                    <div style={{fontSize:".78rem",color:"#8b44f0",fontWeight:600,background:"#8b44f015",borderRadius:".4rem",padding:".25rem .65rem",border:"1px solid #8b44f030"}}>
+                      = {(parentMg/parseFloat(pf.dose_mg)).toFixed(2)}x por {parentProd?.name}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+            {autoQty&&(
+              <div style={{fontSize:".7rem",color:"#8b44f0",background:"#8b44f015",borderRadius:".4rem",padding:".35rem .65rem",marginTop:".35rem",display:"flex",alignItems:"center",gap:".35rem"}}>
+                <span>💡</span>
+                <span>Vender 1 Fração {pf.dose_mg}mg = {(1/autoQty).toFixed(4)} {parentProd?.name} consumido · {autoQty.toFixed(2)} frações por {parentProd?.name}</span>
+              </div>
+            )}
+            {!parentMg&&pf.qty_per_parent&&(
+              <div style={{fontSize:".7rem",color:"#8b44f0",background:"#8b44f015",borderRadius:".4rem",padding:".35rem .65rem",marginTop:".35rem"}}>
+                💡 Vender 1 unidade deduzirá {(1/parseFloat(pf.qty_per_parent||1)).toFixed(4)} de {parentProd?.name||"produto pai"}
+              </div>
+            )}
+          </>);
+        })()}
+      </div>
         <Inp label="Nome *" placeholder="Ex: Tirzepatida 2.5mg, Isopor 10L..." value={pf.name} onChange={e=>setPf(f=>({...f,name:e.target.value}))}/>
         <R2><Sel label="Fornecedor" hint="opcional" value={pf.supplier_id} onChange={e=>setPf(f=>({...f,supplier_id:e.target.value}))}><option value="">Nenhum</option>{suppliers.map(s=><option key={s.id} value={s.id}>{s.name}</option>)}</Sel><Inp label="Unidade" hint="ex: ampola, un, cx..." placeholder="ampola" value={pf.unit} onChange={e=>setPf(f=>({...f,unit:e.target.value}))}/></R2>
         <R2><Inp label="Lote" placeholder="L2025001" value={pf.batch} onChange={e=>setPf(f=>({...f,batch:e.target.value}))}/><Inp label="Vencimento" type="date" value={pf.expiry} onChange={e=>setPf(f=>({...f,expiry:e.target.value}))}/></R2>
         <R2><Inp label="Custo/un (R$) *" type="number" min="0" step="0.01" placeholder="0,00" value={pf.cost_per_unit} onChange={e=>setPf(f=>({...f,cost_per_unit:e.target.value}))}/><Inp label="Preço venda/un (R$) *" type="number" min="0" step="0.01" placeholder="0,00" value={pf.price_per_unit} onChange={e=>setPf(f=>({...f,price_per_unit:e.target.value}))}/></R2>
         <MPreview cost={pf.cost_per_unit} price={pf.price_per_unit}/>
-        <R2><Inp label="Estoque inicial" type="number" min="0" value={pf.stock_qty} onChange={e=>setPf(f=>({...f,stock_qty:e.target.value}))}/><Inp label="Estoque mínimo" hint="alerta" type="number" min="0" value={pf.min_stock} onChange={e=>setPf(f=>({...f,min_stock:e.target.value}))}/></R2>
+        <R2><Inp label="Estoque inicial" type="number" min="0" value={pf.stock_qty} onChange={e=>setPf(f=>({...f,stock_qty:e.target.value}))}/>
+      {!pf.parent_product_id&&(
+        <div>
+          <div style={{fontSize:".65rem",color:"var(--sub)",marginBottom:".28rem"}}>Total mg por unidade <span style={{color:"var(--tx6)"}}>(opcional — para T.G. e similares)</span></div>
+          <div style={{display:"flex",gap:".4rem",alignItems:"center"}}>
+            <input type="number" min="0" step="0.001" value={pf.total_mg||""} onChange={e=>setPf(f=>({...f,total_mg:e.target.value}))} placeholder="Ex: 15" style={{...IS,width:90,color:"#8b44f0",fontWeight:700}}/>
+            <span style={{fontSize:".8rem",color:"var(--tx5)"}}>mg / unidade</span>
+          </div>
+        </div>
+      )}<Inp label="Estoque mínimo" hint="alerta" type="number" min="0" value={pf.min_stock} onChange={e=>setPf(f=>({...f,min_stock:e.target.value}))}/></R2>
         <div style={{display:"flex",gap:".5rem",justifyContent:"space-between",alignItems:"center"}}>
           <Btn v="ghost" sm onClick={()=>setModal("addSupp")}><Ic n="supplier" s={12}/>+ Fornecedor</Btn>
           <div style={{display:"flex",gap:".5rem"}}><Btn v="ghost" onClick={()=>setModal(null)}>Cancelar</Btn><Btn onClick={addProduct}><Ic n="save" s={13}/>Salvar</Btn></div>
@@ -2718,13 +3338,62 @@ export default function App(){
     {/* Editar produto */}
     {modal==="editProd"&&editing&&(
       <Modal title="Editar Produto" onClose={()=>{setModal(null);setEditing(null);}} icon="edit" wide>
-        <R2><Inp label="Código" value={editing.code||""} onChange={e=>setEditing(v=>({...v,code:e.target.value}))}/><Sel label="Categoria" value={editing.category||"outro"} onChange={e=>setEditing(v=>({...v,category:e.target.value}))}><option value="tirzepatida">💉 Tirzepatida</option><option value="seringa">🩺 Seringa/Agulha</option><option value="material">🧊 Material</option><option value="embalagem">📦 Embalagem</option><option value="outro">📋 Outro</option></Sel></R2>
+        <R2><Inp label="Código" value={editing.code||""} onChange={e=>setEditing(v=>({...v,code:e.target.value}))}/><Sel label="Categoria" value={editing.category||"outro"} onChange={e=>setEditing(v=>({...v,category:e.target.value}))}>{activeCats.map(c=><option key={c.key} value={c.key}>{c.icon} {c.label}</option>)}</Sel></R2>
+      <div style={{borderTop:"1px solid var(--bdr)",paddingTop:".75rem",marginTop:".25rem"}}>
+        <div style={{fontSize:".72rem",color:"#8b44f0",fontWeight:700,marginBottom:".5rem",display:"flex",alignItems:"center",gap:".35rem"}}>🧬 Hierarquia (opcional)</div>
+        <R2>
+          <div>
+            <div style={{fontSize:".65rem",color:"var(--sub)",marginBottom:".28rem"}}>Produto principal (pai)</div>
+            <select value={editing.parent_product_id||""} onChange={e=>setEditing(v=>({...v,parent_product_id:e.target.value||null}))} style={IS}>
+              <option value="">Produto independente</option>
+              {products.filter(p=>p.id!==editing.id&&!p.parent_product_id).map(p=><option key={p.id} value={p.id}>{p.name}</option>)}
+            </select>
+          </div>
+          <Inp label="Qtd por produto pai" type="number" min="0.001" step="0.001" hint="ex: 4 ampolas/caixa" value={editing.qty_per_parent||""} onChange={e=>setEditing(v=>({...v,qty_per_parent:e.target.value}))} disabled={!editing.parent_product_id}/>
+        </R2>
+        {editing.parent_product_id&&(()=>{
+          const parentProd=products.find(p=>p.id===editing.parent_product_id);
+          const parentMg=parseFloat(parentProd?.total_mg)||0;
+          const doseMg=parseFloat(editing.dose_mg)||0;
+          const autoQty=parentMg>0&&doseMg>0?parentMg/doseMg:null;
+          return(<>
+            {parentMg>0&&(
+              <div style={{marginTop:".45rem"}}>
+                <div style={{fontSize:".65rem",color:"#8b44f0",marginBottom:".28rem",fontWeight:700}}>💊 Dose desta fração</div>
+                <div style={{display:"flex",gap:".5rem",alignItems:"center"}}>
+                  <input type="number" min="0.001" step="0.001" value={editing.dose_mg||""} onChange={e=>{const d=parseFloat(e.target.value)||0;setEditing(v=>({...v,dose_mg:e.target.value,qty_per_parent:parentMg>0&&d>0?String(parentMg/d):v.qty_per_parent}));}} placeholder="Ex: 2.5" style={{...IS,width:100,fontWeight:700,color:"#8b44f0",fontSize:".9rem"}}/>
+                  <span style={{fontSize:".82rem",color:"var(--tx4)"}}>mg</span>
+                  {editing.dose_mg&&parentMg>0&&(
+                    <div style={{fontSize:".78rem",color:"#8b44f0",fontWeight:600,background:"#8b44f015",borderRadius:".4rem",padding:".25rem .65rem",border:"1px solid #8b44f030"}}>
+                      = {(parentMg/parseFloat(editing.dose_mg||1)).toFixed(2)}x por {parentProd?.name}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+            {autoQty&&(
+              <div style={{fontSize:".7rem",color:"#8b44f0",background:"#8b44f015",borderRadius:".4rem",padding:".35rem .65rem",marginTop:".35rem"}}>
+                💡 Vender 1 Fração {editing.dose_mg}mg = {(1/autoQty).toFixed(4)} {parentProd?.name} consumido
+              </div>
+            )}
+          </>);
+        })()}
+      </div>
         <Inp label="Nome *" value={editing.name} onChange={e=>setEditing(v=>({...v,name:e.target.value}))}/>
         <R2><Sel label="Fornecedor" value={editing.supplier_id||""} onChange={e=>setEditing(v=>({...v,supplier_id:e.target.value}))}><option value="">Nenhum</option>{suppliers.map(s=><option key={s.id} value={s.id}>{s.name}</option>)}</Sel><Inp label="Unidade" value={editing.unit||"un"} onChange={e=>setEditing(v=>({...v,unit:e.target.value}))}/></R2>
         <R2><Inp label="Lote" value={editing.batch||""} onChange={e=>setEditing(v=>({...v,batch:e.target.value}))}/><Inp label="Vencimento" type="date" value={editing.expiry||""} onChange={e=>setEditing(v=>({...v,expiry:e.target.value}))}/></R2>
         <R2><Inp label="Custo/un (R$)" type="number" min="0" step="0.01" value={editing.cost_per_unit} onChange={e=>setEditing(v=>({...v,cost_per_unit:e.target.value}))}/><Inp label="Preço venda/un (R$)" type="number" min="0" step="0.01" value={editing.price_per_unit} onChange={e=>setEditing(v=>({...v,price_per_unit:e.target.value}))}/></R2>
         <MPreview cost={editing.cost_per_unit} price={editing.price_per_unit}/>
         <R2><Inp label="Estoque atual" type="number" min="0" value={editing.stock_qty} onChange={e=>setEditing(v=>({...v,stock_qty:e.target.value}))}/><Inp label="Estoque mínimo" type="number" min="0" value={editing.min_stock} onChange={e=>setEditing(v=>({...v,min_stock:e.target.value}))}/></R2>
+        {!editing.parent_product_id&&(
+          <div>
+            <div style={{fontSize:".65rem",color:"var(--sub)",marginBottom:".28rem"}}>Total mg / unidade <span style={{color:"var(--tx6)"}}>(opcional)</span></div>
+            <div style={{display:"flex",gap:".4rem",alignItems:"center"}}>
+              <input type="number" min="0" step="0.001" value={editing.total_mg||""} onChange={e=>setEditing(v=>({...v,total_mg:e.target.value}))} placeholder="Ex: 15" style={{...IS,width:90,color:"#8b44f0",fontWeight:700}}/>
+              <span style={{fontSize:".8rem",color:"var(--tx5)"}}>mg / unidade</span>
+            </div>
+          </div>
+        )}
         <div style={{display:"flex",gap:".5rem",justifyContent:"space-between"}}>
           {isAdmin&&<Btn v="del" sm onClick={()=>delProduct(editing.id)}><Ic n="trash" s={12}/>Excluir</Btn>}
           <div style={{display:"flex",gap:".5rem",marginLeft:"auto"}}><Btn v="ghost" onClick={()=>{setModal(null);setEditing(null);}}>Cancelar</Btn><Btn onClick={saveProduct}><Ic n="save" s={13}/>Salvar</Btn></div>
@@ -2820,7 +3489,7 @@ export default function App(){
     {showReceipt&&(
       <Modal title="Comprovante de Venda" onClose={()=>setShowReceipt(null)} icon="pdf" wide>
         <div style={{textAlign:"center",marginBottom:"1.25rem",paddingBottom:"1rem",borderBottom:"1px solid var(--bdr)"}}>
-          <div style={{fontSize:"1.2rem",fontWeight:800,fontFamily:"'Syne',sans-serif",color:"var(--tx)"}}>CaixaPro · Tirzepatida</div>
+          <div style={{fontSize:"1.2rem",fontWeight:800,fontFamily:"'Syne',sans-serif",color:"var(--tx)"}}>{companyInfo.showInPDF!==false?(companyInfo.name||"CaixaPro · Tirzepatida"):"Comprovante de Venda"}</div>
           <div style={{fontSize:".75rem",color:"var(--tx5)",marginTop:".15rem"}}>Comprovante de Venda · {showReceipt[0]&&showReceipt[0].date}</div>
         </div>
         {showReceipt[0]&&showReceipt[0].client_name&&(
@@ -2872,7 +3541,7 @@ export default function App(){
             </>);
           })()}
         </div>
-        <div style={{textAlign:"center",fontSize:".68rem",color:"var(--tx6)",marginBottom:"1rem"}}>Obrigado pela compra! · CaixaPro · Tirzepatida</div>
+        <div style={{textAlign:"center",fontSize:".68rem",color:"var(--tx6)",marginBottom:"1rem"}}>{companyInfo.showInPDF!==false?"Obrigado pela compra! · "+(companyInfo.name||"CaixaPro")+(companyInfo.phone?" · "+companyInfo.phone:""):"Obrigado pela compra!"}</div>
         <div style={{display:"flex",gap:".5rem",justifyContent:"flex-end"}}>
           <Btn v="ghost" onClick={()=>setShowReceipt(null)}>Fechar</Btn>
           <Btn onClick={()=>window.print()}><Ic n="pdf" s={13}/>Imprimir</Btn>
@@ -3074,9 +3743,7 @@ export default function App(){
                   <div style={{display:"flex",alignItems:"center",gap:".4rem"}}>
                     <span style={{fontSize:".75rem",color:r.real>=r.goal&&r.goal>0?"#10b981":"var(--tx3)",fontWeight:600}}>{fmt(r.real)}</span>
                     <span style={{fontSize:".68rem",color:"var(--tx5)"}}>de</span>
-                    <div style={{position:"relative",display:"flex",alignItems:"center"}}>
-                      <input type="number" min="0" step="100" value={r.goal||""} onChange={e=>saveMonthlyGoal(r.key,e.target.value)} placeholder="meta..." style={{width:100,background:"var(--inp)",border:"1px solid var(--bdr2)",borderRadius:".35rem",padding:".22rem .45rem",color:"var(--tx)",fontSize:".75rem",fontFamily:"'DM Sans',sans-serif",outline:"none",textAlign:"right"}}/>
-                    </div>
+                    <div style={{fontSize:".85rem",fontWeight:700,color:"#4f5ef0",fontFamily:"'Syne',sans-serif",minWidth:90,textAlign:"right"}}>{r.goal>0?fmt(r.goal):<span style={{color:"var(--tx6)",fontSize:".72rem"}}>—</span>}</div>
                     <span style={{fontSize:".72rem",fontWeight:700,color:r.pct>=100?"#10b981":r.pct>=70?"#f59e0b":r.isPast&&r.goal>0?"#f56565":"var(--tx5)",minWidth:42,textAlign:"right"}}>{r.goal>0?fmtPct(r.pct):"—"}{r.pct>=100?" 🏆":r.isPast&&r.goal>0&&r.pct<70?" ❌":""}</span>
                   </div>
                 </div>
@@ -3086,7 +3753,7 @@ export default function App(){
               </div>
             ))}
           </div>
-          <div style={{textAlign:"center",fontSize:".7rem",color:"var(--tx5)"}}>As metas são salvas automaticamente ao digitar · Dados de realizado vêm do Caixa</div>
+          <div style={{textAlign:"center",fontSize:".7rem",color:"var(--tx5)",display:"flex",alignItems:"center",justifyContent:"center",gap:".4rem"}}><span>Visualização das metas · Para editar acesse</span><button onClick={()=>{setShowGoals(false);setTab("config");setConfigSection("metas");}} style={{background:"none",border:"none",color:"#4f5ef0",fontSize:".72rem",fontFamily:"'DM Sans',sans-serif",fontWeight:700,cursor:"pointer",padding:0}}>⚙️ Config → 🎯 Metas</button></div>
         </Modal>
       );
     })()}
@@ -3115,7 +3782,7 @@ export default function App(){
             <div key={item.key} style={{display:"grid",gridTemplateColumns:"1fr 60px 90px 32px",gap:".35rem",marginBottom:".4rem",alignItems:"center"}}>
               <select value={item.product_id} onChange={e=>orderSetProduct(item.key,e.target.value)} style={{...IS,fontSize:".8rem",padding:".45rem .6rem"}}>
                 <option value="">Selecione...</option>
-                {products.map(p=><option key={p.id} value={p.id}>{CATS[p.category]||"📋"} {p.name}</option>)}
+                {products.map(p=><option key={p.id} value={p.id}>{(activeCats.find(c=>c.key===p.category)||{icon:"📋"}).icon} {p.name}</option>)}
               </select>
               <input type="number" min="1" value={item.qty} onChange={e=>setOrderItems(items=>items.map(i=>i.key!==item.key?i:{...i,qty:parseInt(e.target.value)||1}))} style={{...IS,fontSize:".82rem",textAlign:"center",padding:".45rem .4rem"}}/>
               <input type="number" min="0" step="0.01" value={item.unit_cost||""} onChange={e=>setOrderItems(items=>items.map(i=>i.key!==item.key?i:{...i,unit_cost:parseFloat(e.target.value)||0}))} placeholder="0,00" style={{...IS,fontSize:".82rem",padding:".45rem .5rem"}}/>
@@ -3180,7 +3847,7 @@ export default function App(){
       const pendingItems=allItems.map((it,i)=>({...it,_idx:i})).filter(it=>!it.received);
       const checkedList=Object.entries(receiveChecked)
         .filter(([,v])=>v.checked)
-        .map(([k,v])=>({index:parseInt(k),qty:parseInt(v.qty)||allItems[parseInt(k)].qty,item:allItems[parseInt(k)]}));
+        .map((c)=>({index:parseInt(k),qty:parseInt(v.qty)||allItems[parseInt(k)].qty,item:allItems[parseInt(k)]}));
       const selectedTotal=checkedList.reduce((a,{index,qty})=>a+(allItems[index].unit_cost*qty),0);
       const orderTotal=showReceiveModal.total_value;
       const alreadyPaid=showReceiveModal.initial_value+(showReceiveModal.remaining_paid||0);
