@@ -389,7 +389,7 @@ function Analytics({onClose,sales,cashTx,products,clients,dark,receivables=[],or
   const margin=rev>0?(profit/rev)*100:0;
   const markup=cost>0?(profit/cost)*100:0;
   const units=fS.reduce((a,s)=>a+s.quantity,0);
-  const ticket=fS.length>0?fS.reduce((a,s)=>a+s.total_price,0)/fS.length:0;
+  const ticket=fS.length>0?batchRevenue(fS)/fS.length:0;
   const stockVal=products.reduce((a,p)=>a+p.stock_qty*(p.cost_per_unit||0),0);
 
   // Sparkline 7 dias
@@ -626,7 +626,30 @@ export default function App(){
   const[orderPct,setOrderPct]=useState("50");
   const[orderNotes,setOrderNotes]=useState("");
   const[receiveExtra,setReceiveExtra]=useState(""); // extra payment on receipt
-  const[receiveChecked,setReceiveChecked]=useState({}); // {itemIndex: {checked, qty}}
+  const[receiveChecked,setReceiveChecked]=useState({});
+  // ── Frete ─────────────────────────────────────────────────────
+  const defaultFreteConfig={
+    origens:[
+      {id:"1",name:"Ponto 1",address:"",lat:null,lon:null},
+      {id:"2",name:"Ponto 2",address:"",lat:null,lon:null},
+      {id:"3",name:"Ponto 3",address:"",lat:null,lon:null},
+    ],
+    base:5,ratePerKm:2.5,minFee:10,maxFee:0
+  };
+  const[freteConfig,setFreteConfig]=useState(defaultFreteConfig);
+  const[localFrete,setLocalFrete]=useState(null);
+  const[showFreteConfig,setShowFreteConfig]=useState(false);
+  const[freteOrigem,setFreteOrigem]=useState("1");
+  const[freteDestino,setFreteDestino]=useState("");
+  const[freteResult,setFreteResult]=useState(null);
+  const[freteLoading,setFreteLoading]=useState(false);
+  const[freteGeoList,setFreteGeoList]=useState([]);
+  const[showFreteCalcInCart,setShowFreteCalcInCart]=useState(false);
+  const[freteCalcDestino,setFreteCalcDestino]=useState("");
+  const[freteCalcOrigem,setFreteCalcOrigem]=useState("1");
+  const[freteCalcResult,setFreteCalcResult]=useState(null);
+  const[freteCalcLoading,setFreteCalcLoading]=useState(false);
+  const[freteCalcGeoList,setFreteCalcGeoList]=useState([]); // {itemIndex: {checked, qty}}
   const[receivePayment,setReceivePayment]=useState(""); // payment for selected items
   const[cartDiscount,setCartDiscount]=useState("");
   const[cartParcelas,setCartParcelas]=useState(2);
@@ -693,6 +716,8 @@ export default function App(){
       if(settings&&settings.length>0){
         const taxRow=settings.find(s=>s.key==="cardtaxes");
         if(taxRow){try{setCardTaxes(JSON.parse(taxRow.value));}catch{}}
+        const freteRow=settings.find(s=>s.key==="freteconfig");
+        if(freteRow){try{setFreteConfig(JSON.parse(freteRow.value));}catch{}}
         const goals={};
         settings.filter(s=>s.key.startsWith("goal_")).forEach(s=>{
           goals[s.key.replace("goal_","")]=parseFloat(s.value)||0;
@@ -722,7 +747,17 @@ export default function App(){
   const stockVal=useMemo(()=>products.reduce((a,p)=>a+p.stock_qty*(p.cost_per_unit||0),0),[products]);
   const zeroStk=useMemo(()=>products.filter(p=>p.stock_qty<=0),[products]);
   const lowStk=useMemo(()=>products.filter(p=>p.stock_qty>0&&p.stock_qty<=(p.min_stock||5)),[products]);
-  const totalSalesRev=useMemo(()=>sales.reduce((a,s)=>a+s.total_price,0),[sales]);
+  // Helper: calcula receita real descontando desconto UMA vez por batch
+  const batchRevenue=(arr)=>{
+    const b={};
+    arr.forEach(s=>{
+      const k=s.batch_id||s.id;
+      if(!b[k])b[k]={total:0,disc:parseFloat(s.discount)||0};
+      b[k].total+=parseFloat(s.total_price)||0;
+    });
+    return Object.values(b).reduce((a,v)=>a+Math.max(0,v.total-v.disc),0);
+  };
+  const totalSalesRev=useMemo(()=>batchRevenue(sales),[sales]);
   const totalUnits=useMemo(()=>sales.reduce((a,s)=>a+s.quantity,0),[sales]);
 
   const isAdmin=cu?.role==="admin";
@@ -1132,6 +1167,93 @@ export default function App(){
     }catch(ex){toast$("Erro: "+ex.message,"#f56565");}
   };
 
+
+  // ── FRETE HELPERS ───────────────────────────────────────────────
+  const saveFreteConfig=async(cfg)=>{
+    try{
+      await supabase.from("app_settings").upsert({
+        key:"freteconfig",value:JSON.stringify(cfg),
+        updated_at:nowISO(),updated_by:cu.display_name
+      },{onConflict:"key"});
+      setFreteConfig(cfg);
+      toast$("✅ Configurações de frete salvas na nuvem!");
+    }catch(e){toast$("Erro ao salvar: "+e.message,"#f56565");}
+  };
+
+  const geocodeAddr=async(address)=>{
+    const url="https://nominatim.openstreetmap.org/search?q="+encodeURIComponent(address+" Brasil")+"&format=json&limit=5&accept-language=pt-BR";
+    const res=await fetch(url);
+    const data=await res.json();
+    return data.map(d=>({display:d.display_name,lat:parseFloat(d.lat),lon:parseFloat(d.lon)}));
+  };
+
+  const calcFreteWithCoords=async(origem,dest)=>{
+    const url="https://router.project-osrm.org/route/v1/driving/"+origem.lon+","+origem.lat+";"+dest.lon+","+dest.lat+"?overview=false";
+    const res=await fetch(url);
+    const data=await res.json();
+    if(data.code!=="Ok")throw new Error("Rota não encontrada. Verifique os endereços.");
+    const distKm=data.routes[0].distance/1000;
+    const durMin=Math.round(data.routes[0].duration/60);
+    const base=parseFloat(freteConfig.base)||0;
+    const rate=parseFloat(freteConfig.ratePerKm)||0;
+    const minF=parseFloat(freteConfig.minFee)||0;
+    const maxF=parseFloat(freteConfig.maxFee)||0;
+    let fee=base+distKm*rate;
+    if(minF>0)fee=Math.max(fee,minF);
+    if(maxF>0)fee=Math.min(fee,maxF);
+    fee=Math.round(fee*100)/100;
+    setFreteResult({distKm:distKm.toFixed(1),durMin,fee,destName:dest.display,origName:origem.name,calcDetail:{base,rate,distKm:distKm.toFixed(1),minF,maxF}});
+    setFreteGeoList([]);
+    setFreteLoading(false);
+  };
+
+  const calcFrete=async()=>{
+    if(freteLoading)return;
+    setFreteLoading(true);setFreteResult(null);setFreteGeoList([]);
+    try{
+      const origem=freteConfig.origens.find(o=>o.id===freteOrigem);
+      if(!origem||!origem.lat){toast$("Configure e localize o ponto de origem antes.","#f56565");setFreteLoading(false);return;}
+      if(!freteDestino.trim()){toast$("Informe o endereço de destino.","#f56565");setFreteLoading(false);return;}
+      const results=await geocodeAddr(freteDestino);
+      if(results.length===0){toast$("Endereço não encontrado. Inclua cidade/bairro.","#f56565");setFreteLoading(false);return;}
+      if(results.length===1){await calcFreteWithCoords(origem,results[0]);return;}
+      setFreteGeoList(results);setFreteLoading(false);
+    }catch(e){toast$(e.message,"#f56565");setFreteLoading(false);}
+  };
+
+  const calcFreteInCart=async(destino,origemId)=>{
+    setFreteCalcLoading(true);setFreteCalcResult(null);setFreteCalcGeoList([]);
+    try{
+      const origem=freteConfig.origens.find(o=>o.id===origemId);
+      if(!origem||!origem.lat){toast$("Configure o ponto de origem na aba Frete primeiro.","#f56565");setFreteCalcLoading(false);return;}
+      if(!destino.trim()){toast$("Informe o endereço de destino.","#f56565");setFreteCalcLoading(false);return;}
+      const results=await geocodeAddr(destino);
+      if(results.length===0){toast$("Endereço não encontrado. Inclua cidade/bairro.","#f56565");setFreteCalcLoading(false);return;}
+      if(results.length>1){setFreteCalcGeoList(results);setFreteCalcLoading(false);return;}
+      await calcFreteInCartWithCoords(origem,results[0]);
+    }catch(e){toast$(e.message,"#f56565");setFreteCalcLoading(false);}
+  };
+
+  const calcFreteInCartWithCoords=async(origem,dest)=>{
+    const url="https://router.project-osrm.org/route/v1/driving/"+origem.lon+","+origem.lat+";"+dest.lon+","+dest.lat+"?overview=false";
+    const res=await fetch(url);
+    const data=await res.json();
+    if(data.code!=="Ok")throw new Error("Rota não encontrada.");
+    const distKm=data.routes[0].distance/1000;
+    const durMin=Math.round(data.routes[0].duration/60);
+    const base=parseFloat(freteConfig.base)||0;
+    const rate=parseFloat(freteConfig.ratePerKm)||0;
+    const minF=parseFloat(freteConfig.minFee)||0;
+    const maxF=parseFloat(freteConfig.maxFee)||0;
+    let fee=base+distKm*rate;
+    if(minF>0)fee=Math.max(fee,minF);
+    if(maxF>0)fee=Math.min(fee,maxF);
+    fee=Math.round(fee*100)/100;
+    setFreteCalcResult({distKm:distKm.toFixed(1),durMin,fee,destName:dest.display,origName:origem.name});
+    setFreteCalcGeoList([]);
+    setFreteCalcLoading(false);
+  };
+
   const markOrderLost=async(order)=>{
     try{
       await supabase.from("orders").update({
@@ -1363,6 +1485,7 @@ export default function App(){
     {id:"clientes",l:"Clientes",n:"client"},
     {id:"produtos",l:"Produtos",n:"product"},
     {id:"pedidos",l:"Pedidos",n:"pkg"},
+    {id:"frete",l:"Frete",n:"delivery"},
     {id:"recebiveis",l:"A Receber",n:"dollar"},
     ...(isAdmin?[{id:"usuarios",l:"Usuários",n:"users"}]:[]),
   ];
@@ -1501,7 +1624,7 @@ export default function App(){
                 const mName=MONTHS_ABR[now.getMonth()];
                 const key=now.getFullYear()+"-"+(now.getMonth()+1).toString().padStart(2,"0");
                 const mGoal=monthlyGoals[key]||parseFloat(monthGoal)||0;
-                const mReal=sales.filter(s=>{const d=new Date(s.created_at);return d>=monthStart&&d<=new Date(now.getFullYear(),now.getMonth()+1,0,23,59,59);}).reduce((a,s)=>a+s.total_price,0);
+                const mReal=sales.filter(s=>{const d=new Date(s.created_at);return d>=monthStart&&d<=new Date(now.getFullYear(),now.getMonth()+1,0,23,59,59);}).reduce((a,s)=>a+s.total_price,0); // discount applied in batchRevenue
                 const mPct=mGoal>0?Math.min((mReal/mGoal)*100,100):0;
                 return(
                   <div style={{background:"linear-gradient(135deg,#4f5ef010,#10b98108)",border:"1px solid #4f5ef040",borderRadius:".65rem",padding:".7rem .85rem",marginBottom:".65rem"}}>
@@ -1586,6 +1709,7 @@ export default function App(){
             <div style={{display:"flex",gap:".4rem",flexWrap:"wrap",alignItems:"center"}}>
               <XBtn rows={fSales.map(s=>({Data:s.date,Produto:s.product_name,Cliente:s.client_name||"—",Qtd:s.quantity,Preço:fmt(s.unit_price),Total:fmt(s.total_price),Pagamento:s.payment_method,Obs:s.notes||""}))} name="vendas-caixapro" sheet="Vendas"/>
               <PBtn cols={[{k:"Data",l:"Data"},{k:"Produto",l:"Produto"},{k:"Cliente",l:"Cliente"},{k:"Qtd",l:"Qtd"},{k:"Total",l:"Total"},{k:"Pagamento",l:"Pagamento"}]} rows={fSales.map(s=>({Data:s.date,Produto:s.product_name,Cliente:s.client_name||"—",Qtd:s.quantity,Total:fmt(s.total_price),Pagamento:s.payment_method}))} name="vendas-caixapro" title="Relatório de Vendas"/>
+              <Btn sm v="ghost" onClick={()=>setTab("frete")}><span style={{fontSize:11}}>🛵</span> Frete</Btn>
               {canEdit&&<Btn sm onClick={()=>setModal("sale")}><Ic n="plus" s={12}/>Nova</Btn>}
             </div>
           </div>
@@ -1610,17 +1734,18 @@ export default function App(){
                     {s.unit_price===0&&<Badge color="#f59e0b" sm>Cortesia</Badge>}
                     {s.batch_id&&<Badge color="#44475a" sm>Lote</Badge>}
                     <Badge color={s.payment_method==="Crédito Parcelado"?"#8b44f0":s.payment_method==="Débito"?"#0891b2":s.payment_method==="PIX"?"#10b981":s.payment_method==="Dinheiro"?"#f59e0b":"#0891b2"} sm>{s.payment_method}</Badge>
+                    {(parseFloat(s.discount)||0)>0&&sales.filter(x=>x.batch_id===s.batch_id)[0]?.id===s.id&&<Badge color="#4f5ef0" sm>🏷️ -{fmt(parseFloat(s.discount)||0)}</Badge>}
                   </div>
                   <div style={{fontSize:".67rem",color:"var(--tx5)"}}>{s.date}{s.client_name&&` · 👤 ${s.client_name}`}{s.notes&&` · ${s.notes}`}</div>
                 </div>
                 <div style={{display:"flex",alignItems:"center",gap:".5rem",flexShrink:0,marginLeft:".75rem"}}>
                   <div style={{textAlign:"right"}}>
-                    <div style={{fontWeight:700,color:"#10b981",fontSize:".88rem",fontFamily:"'Syne',sans-serif"}}>{fmt(s.total_price)}</div>
+                    <div style={{fontWeight:700,color:"#10b981",fontSize:".88rem",fontFamily:"'Syne',sans-serif"}}>{fmt(Math.max(0,s.total_price-(s.batch_id?0:(parseFloat(s.discount)||0))))}</div>
                     <div style={{fontSize:".63rem",color:"var(--tx5)"}}>{fmt(s.unit_price)}/un</div>
                   </div>
                   {canEdit&&<div style={{display:"flex",gap:".2rem"}}>
                     <button onClick={()=>{const batch=s.batch_id?sales.filter(x=>x.batch_id===s.batch_id):[s];setShowReceipt(batch);}} style={{background:"none",border:"none",color:"#8b44f0",padding:".2rem"}} title="Comprovante"><Ic n="pdf" s={13}/></button>
-                    {s.client_name&&<button onClick={()=>{const m="Olá "+s.client_name+"! ✅ Venda de *"+s.product_name+"* registrada. Total: *"+fmt(s.total_price)+"*. Pag: "+s.payment_method+". Obrigado!";window.open("https://wa.me/?text="+encodeURIComponent(m),"_blank");}} style={{background:"none",border:"none",color:"#25d366",padding:".2rem"}} title="WhatsApp"><span style={{fontSize:13}}>📱</span></button>}
+                    {s.client_name&&<button onClick={()=>{const m="Olá "+s.client_name+"! ✅ Venda de *"+s.product_name+"* registrada. Total: *"+fmt(Math.max(0,s.total_price-(parseFloat(s.discount)||0)))+"*. Pag: "+s.payment_method+". Obrigado!";window.open("https://wa.me/?text="+encodeURIComponent(m),"_blank");}} style={{background:"none",border:"none",color:"#25d366",padding:".2rem"}} title="WhatsApp"><span style={{fontSize:13}}>📱</span></button>}
                     <button onClick={()=>{setEditing({...s,quantity:String(s.quantity),unit_price:String(s.unit_price)});setModal("editSale");}} style={{background:"none",border:"none",color:"#4f5ef0",padding:".2rem"}} title="Editar"><Ic n="edit" s={13}/></button>
                     {isAdmin&&<button onClick={()=>deleteSale(s.id)} style={{background:"none",border:"none",color:"var(--tx6)",padding:".2rem"}} title="Excluir"><Ic n="trash" s={13}/></button>}
                   </div>}
@@ -1759,8 +1884,8 @@ export default function App(){
           <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:".75rem",flexWrap:"wrap",gap:".5rem"}}>
             <h2 style={{fontFamily:"'Syne',sans-serif",fontWeight:800,fontSize:"1rem",color:"var(--tx)"}}>Clientes</h2>
             <div style={{display:"flex",gap:".4rem",alignItems:"center"}}>
-              <XBtn rows={clients.map(c=>({Nome:c.name,Telefone:c.phone||"",Email:c.email||"",Obs:c.notes||"",Compras:sales.filter(s=>s.client_id===c.id||s.client_name===c.name).length,Total:fmt(sales.filter(s=>s.client_id===c.id||s.client_name===c.name).reduce((a,s)=>a+s.total_price,0))}))} name="clientes-caixapro" sheet="Clientes"/>
-              <PBtn cols={[{k:"Nome",l:"Nome"},{k:"Telefone",l:"Telefone"},{k:"Email",l:"Email"},{k:"Compras",l:"Compras"},{k:"Total",l:"Total"}]} rows={clients.map(c=>({Nome:c.name,Telefone:c.phone||"",Email:c.email||"",Compras:sales.filter(s=>s.client_id===c.id||s.client_name===c.name).length,Total:fmt(sales.filter(s=>s.client_id===c.id||s.client_name===c.name).reduce((a,s)=>a+s.total_price,0))}))} name="clientes-caixapro" title="Relatório de Clientes"/>
+              <XBtn rows={clients.map(c=>({Nome:c.name,Telefone:c.phone||"",Email:c.email||"",Obs:c.notes||"",Compras:sales.filter(s=>s.client_id===c.id||s.client_name===c.name).length,Total:fmt(batchRevenue(sales.filter(s=>s.client_id===c.id||s.client_name===c.name)))}))} name="clientes-caixapro" sheet="Clientes"/>
+              <PBtn cols={[{k:"Nome",l:"Nome"},{k:"Telefone",l:"Telefone"},{k:"Email",l:"Email"},{k:"Compras",l:"Compras"},{k:"Total",l:"Total"}]} rows={clients.map(c=>({Nome:c.name,Telefone:c.phone||"",Email:c.email||"",Compras:sales.filter(s=>s.client_id===c.id||s.client_name===c.name).length,Total:fmt(batchRevenue(sales.filter(s=>s.client_id===c.id||s.client_name===c.name)))}))} name="clientes-caixapro" title="Relatório de Clientes"/>
               {canEdit&&<Btn sm onClick={()=>setModal("cliente")}><Ic n="plus" s={12}/>Novo</Btn>}
             </div>
           </div>
@@ -1840,6 +1965,127 @@ export default function App(){
         </>)}
 
         {/* ══ USUÁRIOS ══ */}
+
+        {/* ══ FRETE ══ */}
+        {tab==="frete"&&(
+          <div style={{animation:"fadeUp .4s ease"}}>
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:".75rem",flexWrap:"wrap",gap:".5rem"}}>
+              <h2 style={{fontFamily:"'Syne',sans-serif",fontWeight:800,fontSize:"1rem",color:"var(--tx)"}}>🛵 Calculadora de Frete</h2>
+              <Btn sm v="ghost" onClick={()=>{setLocalFrete(JSON.parse(JSON.stringify(freteConfig)));setShowFreteConfig(true);}}>⚙️ Configurar</Btn>
+            </div>
+
+            {/* Pré-visualização da fórmula */}
+            <div style={{background:"linear-gradient(135deg,#4f5ef015,#10b98110)",border:"1px solid #4f5ef030",borderRadius:".75rem",padding:".75rem 1rem",marginBottom:".85rem",display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:".5rem"}}>
+              <div style={{fontSize:".75rem",color:"var(--tx4)",display:"flex",alignItems:"center",gap:".35rem",flexWrap:"wrap"}}>
+                <span style={{fontWeight:700,color:"#4f5ef0"}}>Fórmula:</span>
+                <span>R$ {freteConfig.base||0} base</span>
+                <span style={{color:"var(--sub)"}}>+</span>
+                <span>({freteConfig.ratePerKm||0} × km)</span>
+                {(freteConfig.minFee||0)>0&&<span style={{color:"#f59e0b"}}>· mín. R$ {freteConfig.minFee}</span>}
+                {(freteConfig.maxFee||0)>0&&<span style={{color:"#10b981"}}>· máx. R$ {freteConfig.maxFee}</span>}
+              </div>
+              <span style={{fontSize:".7rem",color:"var(--tx5)"}}>Ex: 10km → {fmt((parseFloat(freteConfig.base)||0)+(10*(parseFloat(freteConfig.ratePerKm)||0)))}</span>
+            </div>
+
+            {/* Origens configuradas */}
+            {freteConfig.origens.some(o=>o.lat)&&(
+              <div style={{display:"flex",gap:".35rem",marginBottom:".85rem",flexWrap:"wrap"}}>
+                {freteConfig.origens.filter(o=>o.name&&o.lat).map(o=>(
+                  <button key={o.id} onClick={()=>setFreteOrigem(o.id)}
+                    style={{padding:".35rem .75rem",borderRadius:".45rem",fontSize:".75rem",fontFamily:"'DM Sans',sans-serif",fontWeight:600,border:"1px solid "+(freteOrigem===o.id?"#4f5ef0":"var(--bdr2)"),background:freteOrigem===o.id?"#4f5ef020":"transparent",color:freteOrigem===o.id?"#4f5ef0":"var(--navoff)"}}>
+                    📍 {o.name}
+                  </button>
+                ))}
+              </div>
+            )}
+            {!freteConfig.origens.some(o=>o.lat)&&(
+              <div style={{background:"#f59e0b10",border:"1px solid #f59e0b30",borderRadius:".6rem",padding:".65rem .85rem",marginBottom:".85rem",fontSize:".75rem",color:"#f59e0b",display:"flex",alignItems:"center",gap:".45rem"}}>
+                <Ic n="warn" s={13}/>Nenhum ponto de origem configurado. Clique em ⚙️ Configurar para cadastrar.
+              </div>
+            )}
+
+            {/* Calculadora */}
+            <div style={{background:"var(--card)",border:"1px solid var(--bdr)",borderRadius:".75rem",padding:"1rem",marginBottom:".75rem"}}>
+              <div style={{fontSize:".68rem",color:"var(--sub)",textTransform:"uppercase",letterSpacing:".06em",marginBottom:".5rem",fontWeight:700}}>📍 Endereço de Destino</div>
+              <div style={{display:"flex",gap:".5rem",marginBottom:".5rem",flexWrap:"wrap"}}>
+                <input
+                  value={freteDestino}
+                  onChange={e=>setFreteDestino(e.target.value)}
+                  onKeyDown={e=>e.key==="Enter"&&calcFrete()}
+                  placeholder="Ex: Rua das Flores, 123, Bairro, Cidade"
+                  style={{...IS,flex:1,minWidth:200,fontSize:".85rem"}}
+                />
+                <Btn onClick={calcFrete} disabled={freteLoading||!freteConfig.origens.some(o=>o.lat)}>
+                  {freteLoading?<><span style={{display:"inline-block",animation:"spin 1s linear infinite"}}>⏳</span> Calculando...</>:<>🗺️ Calcular</>}
+                </Btn>
+              </div>
+
+              {/* Múltiplos resultados de geocoding */}
+              {freteGeoList.length>0&&(
+                <div style={{background:"var(--pill)",borderRadius:".5rem",padding:".65rem .85rem",marginBottom:".5rem"}}>
+                  <div style={{fontSize:".7rem",color:"#f59e0b",marginBottom:".45rem",fontWeight:600}}>⚠️ Encontramos vários endereços. Selecione o correto:</div>
+                  {freteGeoList.map((g,i)=>(
+                    <button key={i} onClick={async()=>{
+                      setFreteGeoList([]);setFreteLoading(true);
+                      const origem=freteConfig.origens.find(o=>o.id===freteOrigem);
+                      if(origem&&origem.lat)await calcFreteWithCoords(origem,g);
+                      else setFreteLoading(false);
+                    }} style={{display:"block",width:"100%",textAlign:"left",padding:".5rem .65rem",borderRadius:".4rem",fontSize:".75rem",color:"var(--tx)",background:"transparent",border:"1px solid var(--bdr2)",marginBottom:".3rem",cursor:"pointer",fontFamily:"'DM Sans',sans-serif",lineHeight:1.4}}>
+                      📍 {g.display}
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              {/* Resultado */}
+              {freteResult&&(
+                <div style={{background:"linear-gradient(135deg,#10b98115,#4f5ef010)",border:"1px solid #10b98130",borderRadius:".65rem",padding:"1rem",marginTop:".65rem"}}>
+                  <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(120px,1fr))",gap:".5rem",marginBottom:".75rem"}}>
+                    {[{l:"Distância",v:freteResult.distKm+" km",c:"#4f5ef0"},{l:"Tempo estimado",v:freteResult.durMin+" min",c:"var(--tx)"},{l:"Taxa de entrega",v:fmt(freteResult.fee),c:"#10b981"}].map(m=>(
+                      <div key={m.l} style={{textAlign:"center",background:"var(--sumbox)",borderRadius:".5rem",padding:".6rem .5rem"}}>
+                        <div style={{fontSize:".6rem",color:"var(--sub)",textTransform:"uppercase",marginBottom:".15rem"}}>{m.l}</div>
+                        <div style={{fontSize:".95rem",fontWeight:800,color:m.c,fontFamily:"'Syne',sans-serif"}}>{m.v}</div>
+                      </div>
+                    ))}
+                  </div>
+                  <div style={{fontSize:".67rem",color:"var(--tx5)",marginBottom:".65rem",lineHeight:1.5}}>
+                    🏁 <strong>{freteResult.origName}</strong> → {freteResult.destName.slice(0,80)}{freteResult.destName.length>80?"...":""}
+                  </div>
+                  <div style={{fontSize:".68rem",color:"var(--sub)",marginBottom:".65rem",background:"var(--pill)",padding:".4rem .65rem",borderRadius:".4rem"}}>
+                    💡 Cálculo: R$ {freteResult.calcDetail.base} base + ({freteResult.calcDetail.distKm}km × R$ {freteResult.calcDetail.rate}/km)
+                    {freteResult.calcDetail.minF>0&&` · mín. R$ ${freteResult.calcDetail.minF}`}
+                    {freteResult.calcDetail.maxF>0&&` · máx. R$ ${freteResult.calcDetail.maxF}`}
+                  </div>
+                  <div style={{display:"flex",gap:".5rem",justifyContent:"flex-end",flexWrap:"wrap"}}>
+                    <Btn v="ghost" onClick={()=>setFreteResult(null)}>Limpar</Btn>
+                    <Btn v="ok" onClick={()=>{
+                      setCartFreight(String(freteResult.fee));
+                      setCartDelivery(false);
+                      toast$("🛵 Taxa de R$ "+fmt(freteResult.fee)+" aplicada ao carrinho!");
+                      setTab("vendas");
+                      setModal("sale");
+                    }}>✅ Aplicar à Venda (R$ {fmt(freteResult.fee)})</Btn>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Histórico de cálculos */}
+            <div style={{background:"var(--card)",border:"1px solid var(--bdr)",borderRadius:".75rem",padding:".75rem 1rem"}}>
+              <div style={{fontFamily:"'Syne',sans-serif",fontWeight:700,fontSize:".78rem",color:"var(--tx2)",marginBottom:".5rem"}}>📊 Últimas entregas registradas</div>
+              {(()=>{
+                const entregas=cashTx.filter(t=>t.category==="Frete"||t.description?.toLowerCase().includes("frete")||t.description?.toLowerCase().includes("entregador")).slice(0,5);
+                if(entregas.length===0)return <p style={{color:"var(--tx5)",fontSize:".75rem",textAlign:"center",padding:"1rem"}}>Nenhuma entrega no caixa ainda.</p>;
+                return entregas.map((t,i)=>(
+                  <div key={i} style={{display:"flex",justifyContent:"space-between",padding:".4rem 0",borderBottom:"1px solid var(--sep)",fontSize:".75rem"}}>
+                    <div><span style={{color:"var(--tx)"}}>{t.description?.slice(0,50)}</span><span style={{color:"var(--tx5)",fontSize:".65rem"}}> · {t.date}</span></div>
+                    <span style={{fontWeight:700,color:"#f59e0b",fontFamily:"'Syne',sans-serif"}}>{fmt(t.value)}</span>
+                  </div>
+                ));
+              })()}
+            </div>
+          </div>
+        )}
 
         {/* ══ PEDIDOS ══ */}
         {tab==="pedidos"&&(
@@ -2182,8 +2428,16 @@ export default function App(){
             <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))",gap:".65rem"}}>
               {/* Taxa cobrada do cliente */}
               <div>
-                <div style={{fontSize:".65rem",color:"#10b981",textTransform:"uppercase",letterSpacing:".05em",marginBottom:".3rem",fontWeight:700,display:"flex",alignItems:"center",gap:".3rem"}}>
-                  📈 Taxa cobrada do cliente
+                <div style={{fontSize:".65rem",color:"#10b981",textTransform:"uppercase",letterSpacing:".05em",marginBottom:".3rem",fontWeight:700,display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+                  <span style={{display:"flex",alignItems:"center",gap:".3rem"}}>📈 Taxa cobrada do cliente</span>
+                  <button onClick={()=>{
+                    setFreteCalcDestino(cartClient.name?cartClient.name+" ":"");
+                    setFreteCalcOrigem(freteConfig.origens.find(o=>o.lat)?.id||"1");
+                    setFreteCalcResult(null);setFreteCalcGeoList([]);
+                    setShowFreteCalcInCart(true);
+                  }} style={{background:"#10b98120",border:"1px solid #10b98140",borderRadius:".35rem",padding:".15rem .5rem",color:"#10b981",fontSize:".65rem",fontFamily:"'DM Sans',sans-serif",fontWeight:600,cursor:"pointer",display:"flex",alignItems:"center",gap:".25rem"}}>
+                    🗺️ Calcular
+                  </button>
                 </div>
                 <input
                   type="number" min="0" step="0.01"
@@ -2192,13 +2446,16 @@ export default function App(){
                   placeholder="R$ 0,00"
                   style={{...IS,fontSize:".83rem",borderColor:cartFreightVal>0?"#10b98150":"var(--bdr2)"}}
                 />
-                {cartFreightVal>0&&<div style={{fontSize:".65rem",color:"#10b981",marginTop:".2rem"}}>+ {fmt(cartFreightVal)} na receita</div>}
+                {cartFreightVal>0&&<div style={{fontSize:".65rem",color:"#10b981",marginTop:".2rem",display:"flex",alignItems:"center",gap:".3rem"}}>+ {fmt(cartFreightVal)} na receita
+                  <button onClick={()=>setCartFreight("")} style={{background:"none",border:"none",color:"var(--tx6)",cursor:"pointer",fontSize:".6rem",padding:0}}>✕</button>
+                </div>}
               </div>
 
               {/* Custo do entregador */}
               <div>
                 <div style={{fontSize:".65rem",color:"#f56565",textTransform:"uppercase",letterSpacing:".05em",marginBottom:".3rem",fontWeight:700,display:"flex",alignItems:"center",gap:".3rem"}}>
                   📉 Custo pago ao entregador
+                  <span style={{fontSize:".6rem",color:"var(--tx6)",fontWeight:400,textTransform:"none"}}>(manual)</span>
                 </div>
                 <input
                   type="number" min="0" step="0.01"
@@ -2207,7 +2464,14 @@ export default function App(){
                   placeholder="R$ 0,00"
                   style={{...IS,fontSize:".83rem",borderColor:cartDeliveryCostVal>0?"#f5656550":"var(--bdr2)"}}
                 />
-                {cartDeliveryCostVal>0&&<div style={{fontSize:".65rem",color:"#f56565",marginTop:".2rem"}}>- {fmt(cartDeliveryCostVal)} no caixa</div>}
+                {cartDeliveryCostVal>0&&(
+                  <div style={{fontSize:".65rem",color:"#f56565",marginTop:".2rem",display:"flex",justifyContent:"space-between"}}>
+                    <span>- {fmt(cartDeliveryCostVal)} no caixa</span>
+                    {cartFreightVal>0&&cartDeliveryCostVal>0&&<span style={{color:cartFreightVal>cartDeliveryCostVal?"#10b981":"#f59e0b",fontWeight:600}}>
+                      margem entrega: {fmt(cartFreightVal-cartDeliveryCostVal)}
+                    </span>}
+                  </div>
+                )}
               </div>
 
               {/* Lucro líquido da entrega */}
@@ -2583,11 +2847,30 @@ export default function App(){
           </tbody>
         </table>
         <div style={{background:"var(--pill)",borderRadius:".5rem",padding:"1rem",marginBottom:"1rem"}}>
-          <div style={{display:"flex",justifyContent:"space-between",borderTop:"1px solid var(--bdr)",paddingTop:".5rem",marginTop:".25rem"}}>
-            <span style={{fontWeight:700,color:"var(--tx)",fontFamily:"'Syne',sans-serif"}}>TOTAL</span>
-            <span style={{fontWeight:800,fontSize:"1.1rem",color:"#10b981",fontFamily:"'Syne',sans-serif"}}>{fmt(showReceipt.reduce((a,s)=>a+s.total_price,0))}</span>
-          </div>
-          {showReceipt[0]&&<div style={{fontSize:".73rem",color:"var(--sub)",textAlign:"right",marginTop:".2rem"}}>Pagamento: {showReceipt[0].payment_method}</div>}
+          {(()=>{
+            const subtotal=showReceipt.reduce((a,s)=>a+s.total_price,0);
+            const disc=parseFloat(showReceipt[0]?.discount)||0;
+            const total=Math.max(0,subtotal-disc);
+            return(<>
+              {disc>0&&(
+                <div style={{display:"flex",justifyContent:"space-between",fontSize:".8rem",paddingTop:".3rem"}}>
+                  <span style={{color:"var(--tx4)"}}>Subtotal</span>
+                  <span style={{color:"var(--tx3)"}}>{fmt(subtotal)}</span>
+                </div>
+              )}
+              {disc>0&&(
+                <div style={{display:"flex",justifyContent:"space-between",fontSize:".8rem"}}>
+                  <span style={{color:"#4f5ef0"}}>🏷️ Desconto aplicado</span>
+                  <span style={{color:"#4f5ef0",fontWeight:600}}>- {fmt(disc)}</span>
+                </div>
+              )}
+              <div style={{display:"flex",justifyContent:"space-between",borderTop:"1px solid var(--bdr)",paddingTop:".5rem",marginTop:".25rem"}}>
+                <span style={{fontWeight:700,color:"var(--tx)",fontFamily:"'Syne',sans-serif"}}>TOTAL</span>
+                <span style={{fontWeight:800,fontSize:"1.1rem",color:"#10b981",fontFamily:"'Syne',sans-serif"}}>{fmt(total)}</span>
+              </div>
+              {showReceipt[0]&&<div style={{fontSize:".73rem",color:"var(--sub)",textAlign:"right",marginTop:".2rem"}}>Pagamento: {showReceipt[0].payment_method}</div>}
+            </>);
+          })()}
         </div>
         <div style={{textAlign:"center",fontSize:".68rem",color:"var(--tx6)",marginBottom:"1rem"}}>Obrigado pela compra! · CaixaPro · Tirzepatida</div>
         <div style={{display:"flex",gap:".5rem",justifyContent:"flex-end"}}>
@@ -2602,7 +2885,7 @@ export default function App(){
       <Modal title={"Histórico · "+(showClientHist.name||"")} onClose={()=>setShowClientHist(null)} icon="analytics" wide>
         {(()=>{
           const cs=sales.filter(s=>s.client_id===showClientHist.id||s.client_name===showClientHist.name);
-          const total=cs.reduce((a,s)=>a+s.total_price,0);
+          const total=batchRevenue(cs);
           const prodMap={};
           cs.forEach(s=>{prodMap[s.product_name]=(prodMap[s.product_name]||0)+s.quantity;});
           const lastBuy=cs.length>0?cs[0].date:null;
@@ -2751,7 +3034,7 @@ export default function App(){
         const goal=monthlyGoals[key]||0;
         const monthStart=new Date(goalYear,mi,1);
         const monthEnd=new Date(goalYear,mi+1,0,23,59,59);
-        const real=sales.filter(s=>{const sd=new Date(s.created_at);return sd>=monthStart&&sd<=monthEnd;}).reduce((a,s)=>a+s.total_price,0);
+        const mSales=sales.filter(s=>{const sd=new Date(s.created_at);return sd>=monthStart&&sd<=monthEnd;});const real=batchRevenue(mSales); // discount applied in batchRevenue
         const pct=goal>0?Math.min((real/goal)*100,100):0;
         const isCurrent=now.getFullYear()===goalYear&&now.getMonth()===mi;
         return{key,mName,mi,goal,real,pct,isCurrent};
@@ -3012,6 +3295,194 @@ export default function App(){
         </Modal>
       );
     })()}
+
+
+    {/* ══ FRETE CONFIG ══ */}
+    {showFreteConfig&&localFrete&&(
+      <Modal title="⚙️ Configurar Frete" onClose={()=>setShowFreteConfig(false)} icon="delivery" wide>
+        <div style={{background:"var(--infobox)",borderRadius:".45rem",padding:".5rem .8rem",marginBottom:".85rem",fontSize:".73rem",color:"#4f5ef0",display:"flex",gap:".3rem",alignItems:"center"}}>
+          <Ic n="info" s={12}/>Configurações salvas na nuvem — acessíveis em qualquer dispositivo
+        </div>
+
+        {/* ORIGENS */}
+        <div style={{fontFamily:"'Syne',sans-serif",fontWeight:700,fontSize:".82rem",color:"var(--tx)",marginBottom:".75rem"}}>📍 Pontos de Origem</div>
+        {localFrete.origens.map((origem,oi)=>(
+          <div key={origem.id} style={{background:"var(--pill)",borderRadius:".6rem",padding:".75rem .85rem",marginBottom:".6rem"}}>
+            <div style={{display:"flex",alignItems:"center",gap:".4rem",marginBottom:".5rem"}}>
+              <span style={{fontWeight:700,fontSize:".78rem",color:"#4f5ef0",minWidth:60}}>Ponto {oi+1}</span>
+              <input
+                value={origem.name}
+                onChange={e=>setLocalFrete(lf=>{const o=[...lf.origens];o[oi]={...o[oi],name:e.target.value};return{...lf,origens:o};})}
+                placeholder={"Nome do ponto (ex: Depósito Centro)"}
+                style={{...IS,flex:1,fontSize:".8rem"}}
+              />
+              {origem.lat&&<span style={{fontSize:".65rem",color:"#10b981",background:"#10b98115",borderRadius:"99px",padding:".1rem .45rem",border:"1px solid #10b98130",whiteSpace:"nowrap"}}>✅ localizado</span>}
+            </div>
+            <div style={{display:"flex",gap:".4rem",alignItems:"center",flexWrap:"wrap"}}>
+              <input
+                value={origem.address}
+                onChange={e=>setLocalFrete(lf=>{const o=[...lf.origens];o[oi]={...o[oi],address:e.target.value,lat:null,lon:null};return{...lf,origens:o};})}
+                placeholder="Endereço completo: Rua, Nº, Bairro, Cidade"
+                style={{...IS,flex:1,fontSize:".78rem",minWidth:200}}
+              />
+              <button
+                onClick={async()=>{
+                  if(!origem.address.trim()){toast$("Informe o endereço.","#f56565");return;}
+                  toast$("🔍 Localizando...","#4f5ef0");
+                  try{
+                    const results=await geocodeAddr(origem.address);
+                    if(results.length===0){toast$("Endereço não encontrado. Tente incluir a cidade.","#f56565");return;}
+                    const first=results[0];
+                    setLocalFrete(lf=>{const o=[...lf.origens];o[oi]={...o[oi],lat:first.lat,lon:first.lon,address:first.display.split(",").slice(0,3).join(",").trim()};return{...lf,origens:o};});
+                    toast$("✅ Ponto "+origem.name+" localizado!");
+                  }catch(e){toast$("Erro: "+e.message,"#f56565");}
+                }}
+                style={{background:"#4f5ef020",border:"1px solid #4f5ef040",borderRadius:".4rem",padding:".38rem .75rem",color:"#4f5ef0",fontSize:".75rem",fontFamily:"'DM Sans',sans-serif",fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}}
+              >🔍 Localizar</button>
+              {origem.lat&&<button
+                onClick={()=>setLocalFrete(lf=>{const o=[...lf.origens];o[oi]={...o[oi],lat:null,lon:null};return{...lf,origens:o};})}
+                style={{background:"none",border:"none",color:"var(--tx6)",cursor:"pointer",padding:".2rem"}}
+                title="Remover localização"
+              ><Ic n="trash" s={12}/></button>}
+            </div>
+            {origem.lat&&<div style={{fontSize:".65rem",color:"var(--tx5)",marginTop:".3rem"}}>📌 {origem.lat?.toFixed(5)}, {origem.lon?.toFixed(5)}</div>}
+          </div>
+        ))}
+
+        {/* VALORES */}
+        <div style={{fontFamily:"'Syne',sans-serif",fontWeight:700,fontSize:".82rem",color:"var(--tx)",marginBottom:".65rem",marginTop:"1rem"}}>💰 Cálculo da Taxa</div>
+        <div style={{background:"var(--pill)",borderRadius:".65rem",padding:".85rem",marginBottom:"1rem"}}>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))",gap:".65rem",marginBottom:".65rem"}}>
+            {[
+              {l:"Valor base (R$)",k:"base",hint:"Cobrado em qualquer entrega"},
+              {l:"Taxa por km (R$/km)",k:"ratePerKm",hint:"Multiplicado pela distância"},
+              {l:"Mínimo total (R$)",k:"minFee",hint:"Piso mínimo da taxa (0 = sem mínimo)"},
+              {l:"Máximo total (R$)",k:"maxFee",hint:"Teto máximo da taxa (0 = sem teto)"},
+            ].map(f=>(
+              <div key={f.k}>
+                <div style={{fontSize:".65rem",color:"var(--sub)",marginBottom:".28rem"}}>{f.l}</div>
+                <input type="number" min="0" step="0.5"
+                  value={localFrete[f.k]||""}
+                  onChange={e=>setLocalFrete(lf=>({...lf,[f.k]:e.target.value}))}
+                  placeholder="0,00"
+                  style={IS}/>
+                <div style={{fontSize:".6rem",color:"var(--tx6)",marginTop:".18rem"}}>{f.hint}</div>
+              </div>
+            ))}
+          </div>
+          {/* Preview */}
+          <div style={{background:"var(--card)",borderRadius:".5rem",padding:".6rem .85rem",display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:".35rem"}}>
+            <span style={{fontSize:".73rem",color:"var(--tx4)"}}>💡 Prévia para 10 km:</span>
+            <span style={{fontWeight:700,color:"#10b981",fontFamily:"'Syne',sans-serif",fontSize:".88rem"}}>
+              {fmt(Math.max(
+                parseFloat(localFrete.minFee)||0,
+                Math.min(
+                  parseFloat(localFrete.maxFee)||999999,
+                  (parseFloat(localFrete.base)||0)+(10*(parseFloat(localFrete.ratePerKm)||0))
+                )
+              ))}
+            </span>
+          </div>
+        </div>
+
+        <div style={{display:"flex",gap:".5rem",justifyContent:"space-between"}}>
+          <Btn v="ghost" onClick={()=>setLocalFrete(JSON.parse(JSON.stringify(defaultFreteConfig)))}>↩ Restaurar padrão</Btn>
+          <div style={{display:"flex",gap:".5rem"}}>
+            <Btn v="ghost" onClick={()=>setShowFreteConfig(false)}>Cancelar</Btn>
+            <Btn v="ok" onClick={()=>{saveFreteConfig(localFrete);setShowFreteConfig(false);}}><Ic n="save" s={13}/>Salvar Configurações</Btn>
+          </div>
+        </div>
+      </Modal>
+    )}
+
+
+    {/* ══ CALCULAR FRETE IN-CART ══ */}
+    {showFreteCalcInCart&&(
+      <Modal title="🗺️ Calcular Frete para Entrega" onClose={()=>{setShowFreteCalcInCart(false);setFreteCalcResult(null);setFreteCalcGeoList([]);}} icon="delivery">
+        {/* Seletor de origem */}
+        {freteConfig.origens.filter(o=>o.lat).length>1&&(
+          <div style={{marginBottom:".75rem"}}>
+            <div style={{fontSize:".65rem",color:"var(--sub)",textTransform:"uppercase",marginBottom:".35rem",fontWeight:700}}>Ponto de Origem</div>
+            <div style={{display:"flex",gap:".35rem",flexWrap:"wrap"}}>
+              {freteConfig.origens.filter(o=>o.lat).map(o=>(
+                <button key={o.id} onClick={()=>setFreteCalcOrigem(o.id)}
+                  style={{padding:".32rem .65rem",borderRadius:".4rem",fontSize:".75rem",fontFamily:"'DM Sans',sans-serif",fontWeight:600,border:"1px solid "+(freteCalcOrigem===o.id?"#4f5ef0":"var(--bdr2)"),background:freteCalcOrigem===o.id?"#4f5ef020":"transparent",color:freteCalcOrigem===o.id?"#4f5ef0":"var(--navoff)"}}>
+                  📍 {o.name}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+        {freteConfig.origens.filter(o=>o.lat).length===0&&(
+          <div style={{background:"#f59e0b10",border:"1px solid #f59e0b30",borderRadius:".5rem",padding:".65rem .85rem",marginBottom:".75rem",fontSize:".75rem",color:"#f59e0b"}}>
+            ⚠️ Nenhum ponto de origem configurado. Acesse a aba <strong>Frete</strong> para cadastrar.
+          </div>
+        )}
+        {/* Destino */}
+        <div style={{marginBottom:".65rem"}}>
+          <div style={{fontSize:".65rem",color:"var(--sub)",textTransform:"uppercase",marginBottom:".35rem",fontWeight:700}}>Endereço do Cliente</div>
+          <div style={{display:"flex",gap:".5rem"}}>
+            <input
+              value={freteCalcDestino}
+              onChange={e=>setFreteCalcDestino(e.target.value)}
+              onKeyDown={e=>e.key==="Enter"&&calcFreteInCart(freteCalcDestino,freteCalcOrigem)}
+              placeholder="Rua, Nº, Bairro, Cidade"
+              style={{...IS,flex:1,fontSize:".85rem"}}
+              autoFocus
+            />
+            <Btn onClick={()=>calcFreteInCart(freteCalcDestino,freteCalcOrigem)} disabled={freteCalcLoading||!freteConfig.origens.some(o=>o.lat)}>
+              {freteCalcLoading?"⏳":"🗺️"}
+            </Btn>
+          </div>
+        </div>
+        {/* Múltiplos endereços */}
+        {freteCalcGeoList.length>0&&(
+          <div style={{background:"var(--pill)",borderRadius:".5rem",padding:".65rem .85rem",marginBottom:".65rem"}}>
+            <div style={{fontSize:".7rem",color:"#f59e0b",marginBottom:".45rem",fontWeight:600}}>⚠️ Selecione o endereço correto:</div>
+            {freteCalcGeoList.map((g,i)=>(
+              <button key={i} onClick={async()=>{
+                setFreteCalcGeoList([]);setFreteCalcLoading(true);
+                const origem=freteConfig.origens.find(o=>o.id===freteCalcOrigem);
+                if(origem&&origem.lat)await calcFreteInCartWithCoords(origem,g);
+                else setFreteCalcLoading(false);
+              }} style={{display:"block",width:"100%",textAlign:"left",padding:".45rem .65rem",borderRadius:".4rem",fontSize:".75rem",color:"var(--tx)",background:"transparent",border:"1px solid var(--bdr2)",marginBottom:".3rem",cursor:"pointer",fontFamily:"'DM Sans',sans-serif",lineHeight:1.4}}>
+                📍 {g.display}
+              </button>
+            ))}
+          </div>
+        )}
+        {/* Resultado */}
+        {freteCalcResult&&(
+          <div style={{background:"linear-gradient(135deg,#10b98115,#4f5ef010)",border:"1px solid #10b98130",borderRadius:".65rem",padding:"1rem",marginBottom:".75rem"}}>
+            <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:".45rem",marginBottom:".65rem"}}>
+              {[{l:"Distância",v:freteCalcResult.distKm+" km",c:"#4f5ef0"},{l:"Tempo",v:freteCalcResult.durMin+" min",c:"var(--tx)"},{l:"Taxa calculada",v:fmt(freteCalcResult.fee),c:"#10b981"}].map(m=>(
+                <div key={m.l} style={{textAlign:"center",background:"var(--sumbox)",borderRadius:".45rem",padding:".5rem .3rem"}}>
+                  <div style={{fontSize:".58rem",color:"var(--sub)",textTransform:"uppercase",marginBottom:".1rem"}}>{m.l}</div>
+                  <div style={{fontSize:".88rem",fontWeight:800,color:m.c,fontFamily:"'Syne',sans-serif"}}>{m.v}</div>
+                </div>
+              ))}
+            </div>
+            <div style={{fontSize:".67rem",color:"var(--tx5)",marginBottom:".65rem",lineHeight:1.4}}>
+              🏁 {freteCalcResult.origName} → {freteCalcResult.destName.slice(0,70)}{freteCalcResult.destName.length>70?"...":""}
+            </div>
+            <div style={{background:"#4f5ef010",borderRadius:".4rem",padding:".4rem .65rem",fontSize:".68rem",color:"var(--sub)",marginBottom:".65rem"}}>
+              💡 R$ {freteConfig.base} base + ({freteCalcResult.distKm}km × R$ {freteConfig.ratePerKm}/km) = {fmt(freteCalcResult.fee)}
+            </div>
+            <Btn v="ok" style={{width:"100%",justifyContent:"center"}} onClick={()=>{
+              setCartFreight(String(freteCalcResult.fee));
+              setCartDelivery(true);
+              setShowFreteCalcInCart(false);
+              setFreteCalcResult(null);
+              setFreteCalcGeoList([]);
+              toast$("✅ Taxa de "+fmt(freteCalcResult.fee)+" aplicada ao campo de frete!");
+            }}><Ic n="save" s={13}/>✅ Aplicar R$ {fmt(freteCalcResult.fee)} em "Taxa cobrada do cliente"</Btn>
+          </div>
+        )}
+        <div style={{display:"flex",justifyContent:"flex-end",marginTop:freteCalcResult?0:".5rem"}}>
+          <Btn v="ghost" onClick={()=>{setShowFreteCalcInCart(false);setFreteCalcResult(null);setFreteCalcGeoList([]);}}>Cancelar</Btn>
+        </div>
+      </Modal>
+    )}
 
     {/* Logout */}
     {logoutC&&(
