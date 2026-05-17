@@ -2834,7 +2834,7 @@ export default function App(){
         {tab==="config"&&isAdmin&&(<>
           <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:".75rem"}}>
             <h2 style={{fontFamily:"'Syne',sans-serif",fontWeight:800,fontSize:"1rem",color:"var(--tx)"}}>Usuários</h2>
-            <Btn sm onClick={()=>setConfigSection("usuarios");setModal("addUser")}><Ic n="plus" s={12}/>Novo</Btn>
+            <Btn sm onClick={()=>{setConfigSection("usuarios");setModal("addUser");}}><Ic n="plus" s={12}/>Novo</Btn>
           </div>
           <div style={{background:"var(--card)",border:"1px solid var(--bdr)",borderRadius:".75rem",overflow:"hidden"}}>
             {appUsers.map(u=>(
@@ -2906,7 +2906,7 @@ export default function App(){
               {/* Quantidade */}
               <input
                 type="number" min="1"
-                value={item.quantity}
+                onFocus={e=>e.target.select()} value={item.quantity}
                 onChange={e=>cartSetQty(item.key,e.target.value)}
                 style={{...IS,fontSize:".82rem",padding:".45rem .5rem",textAlign:"center"}}
               />
@@ -3004,7 +3004,7 @@ export default function App(){
                 </div>
                 <input
                   type="number" min="0" step="0.01"
-                  value={cartFreight}
+                  onFocus={e=>e.target.select()} value={cartFreight}
                   onChange={e=>setCartFreight(e.target.value)}
                   placeholder="R$ 0,00"
                   style={{...IS,fontSize:".83rem",borderColor:cartFreightVal>0?"#10b98150":"var(--bdr2)"}}
@@ -3022,7 +3022,7 @@ export default function App(){
                 </div>
                 <input
                   type="number" min="0" step="0.01"
-                  value={cartDeliveryCost}
+                  onFocus={e=>e.target.select()} value={cartDeliveryCost}
                   onChange={e=>setCartDeliveryCost(e.target.value)}
                   placeholder="R$ 0,00"
                   style={{...IS,fontSize:".83rem",borderColor:cartDeliveryCostVal>0?"#f5656550":"var(--bdr2)"}}
@@ -3318,7 +3318,7 @@ export default function App(){
         <R2><Inp label="Lote" placeholder="L2025001" value={pf.batch} onChange={e=>setPf(f=>({...f,batch:e.target.value}))}/><Inp label="Vencimento" type="date" value={pf.expiry} onChange={e=>setPf(f=>({...f,expiry:e.target.value}))}/></R2>
         <R2><Inp label="Custo/un (R$) *" type="number" min="0" step="0.01" placeholder="0,00" value={pf.cost_per_unit} onChange={e=>setPf(f=>({...f,cost_per_unit:e.target.value}))}/><Inp label="Preço venda/un (R$) *" type="number" min="0" step="0.01" placeholder="0,00" value={pf.price_per_unit} onChange={e=>setPf(f=>({...f,price_per_unit:e.target.value}))}/></R2>
         <MPreview cost={pf.cost_per_unit} price={pf.price_per_unit}/>
-        <R2><Inp label="Estoque inicial" type="number" min="0" value={pf.stock_qty} onChange={e=>setPf(f=>({...f,stock_qty:e.target.value}))}/>
+        <R2><Inp label="Estoque inicial" type="number" min="0" onFocus={e=>e.target.select()} value={pf.stock_qty} onChange={e=>setPf(f=>({...f,stock_qty:e.target.value}))}/>
       {!pf.parent_product_id&&(
         <div>
           <div style={{fontSize:".65rem",color:"var(--sub)",marginBottom:".28rem"}}>Total mg por unidade <span style={{color:"var(--tx6)"}}>(opcional — para T.G. e similares)</span></div>
@@ -3384,7 +3384,7 @@ export default function App(){
         <R2><Inp label="Lote" value={editing.batch||""} onChange={e=>setEditing(v=>({...v,batch:e.target.value}))}/><Inp label="Vencimento" type="date" value={editing.expiry||""} onChange={e=>setEditing(v=>({...v,expiry:e.target.value}))}/></R2>
         <R2><Inp label="Custo/un (R$)" type="number" min="0" step="0.01" value={editing.cost_per_unit} onChange={e=>setEditing(v=>({...v,cost_per_unit:e.target.value}))}/><Inp label="Preço venda/un (R$)" type="number" min="0" step="0.01" value={editing.price_per_unit} onChange={e=>setEditing(v=>({...v,price_per_unit:e.target.value}))}/></R2>
         <MPreview cost={editing.cost_per_unit} price={editing.price_per_unit}/>
-        <R2><Inp label="Estoque atual" type="number" min="0" value={editing.stock_qty} onChange={e=>setEditing(v=>({...v,stock_qty:e.target.value}))}/><Inp label="Estoque mínimo" type="number" min="0" value={editing.min_stock} onChange={e=>setEditing(v=>({...v,min_stock:e.target.value}))}/></R2>
+        <R2><Inp label="Estoque atual" type="number" min="0" onFocus={e=>e.target.select()} value={editing.stock_qty} onChange={e=>setEditing(v=>({...v,stock_qty:e.target.value}))}/><Inp label="Estoque mínimo" type="number" min="0" value={editing.min_stock} onChange={e=>setEditing(v=>({...v,min_stock:e.target.value}))}/></R2>
         {!editing.parent_product_id&&(
           <div>
             <div style={{fontSize:".65rem",color:"var(--sub)",marginBottom:".28rem"}}>Total mg / unidade <span style={{color:"var(--tx6)"}}>(opcional)</span></div>
@@ -3784,7 +3784,7 @@ export default function App(){
                 <option value="">Selecione...</option>
                 {products.map(p=><option key={p.id} value={p.id}>{(activeCats.find(c=>c.key===p.category)||{icon:"📋"}).icon} {p.name}</option>)}
               </select>
-              <input type="number" min="1" value={item.qty} onChange={e=>setOrderItems(items=>items.map(i=>i.key!==item.key?i:{...i,qty:parseInt(e.target.value)||1}))} style={{...IS,fontSize:".82rem",textAlign:"center",padding:".45rem .4rem"}}/>
+              <input type="number" min="1" onFocus={e=>e.target.select()} value={item.qty} onChange={e=>setOrderItems(items=>items.map(i=>i.key!==item.key?i:{...i,qty:parseInt(e.target.value)||1}))} style={{...IS,fontSize:".82rem",textAlign:"center",padding:".45rem .4rem"}}/>
               <input type="number" min="0" step="0.01" value={item.unit_cost||""} onChange={e=>setOrderItems(items=>items.map(i=>i.key!==item.key?i:{...i,unit_cost:parseFloat(e.target.value)||0}))} placeholder="0,00" style={{...IS,fontSize:".82rem",padding:".45rem .5rem"}}/>
               <button onClick={()=>setOrderItems(items=>items.length>1?items.filter(i=>i.key!==item.key):items)} disabled={orderItems.length===1} style={{background:orderItems.length===1?"transparent":"#1e1010",border:"1px solid "+(orderItems.length===1?"var(--bdr)":"#3a1515"),borderRadius:".4rem",padding:".4rem",color:orderItems.length===1?"var(--bdr2)":"#f56565",display:"flex",alignItems:"center",justifyContent:"center"}}><Ic n="trash" s={13}/></button>
             </div>
@@ -3895,7 +3895,7 @@ export default function App(){
                     ):(
                       <div style={{display:"flex",alignItems:"center",gap:".3rem"}}>
                         <span style={{fontSize:".68rem",color:"var(--sub)"}}>Qtd:</span>
-                        <input type="number" min="1" max={it.qty} value={ch.qty||it.qty}
+                        <input type="number" min="1" max={it.qty} onFocus={e=>e.target.select()} value={ch.qty||it.qty}
                           onChange={e=>setReceiveChecked(prev=>({...prev,[i]:{...prev[i],qty:Math.min(it.qty,Math.max(1,parseInt(e.target.value)||1)),checked:prev[i]?.checked||false}}))}
                           disabled={!ch.checked}
                           style={{width:55,background:"var(--inp)",border:"1px solid "+(ch.checked?"#4f5ef0":"var(--bdr2)"),borderRadius:".35rem",padding:".22rem .4rem",color:"var(--tx)",fontSize:".78rem",fontFamily:"'DM Sans',sans-serif",outline:"none",textAlign:"center",opacity:ch.checked?1:.5}}/>
