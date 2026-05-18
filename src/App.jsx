@@ -1,7 +1,7 @@
 import React,{useState,useEffect,useCallback,useMemo}from"react";
 import{supabase}from"./supabase";
 
-// ─── HELPERS ──────────────────────────────────────────────────────────────────
+//  HELPERS 
 const fmt=v=>new Intl.NumberFormat("pt-BR",{style:"currency",currency:"BRL"}).format(v||0);
 const fmtN=v=>new Intl.NumberFormat("pt-BR").format(v||0);
 const fmtPct=v=>`${(v||0).toFixed(1)}%`;
@@ -68,7 +68,7 @@ const exportPDF=(cols,rows,name,title)=>{
   doc.save(name+".pdf");
 };
 
-// ─── ÍCONES ───────────────────────────────────────────────────────────────────
+//  ÍCONES 
 const Ic=({n,s=18})=>{
   const P={
     dashboard:<path d="M3 3h8v8H3zm10 0h8v8h-8zM3 13h8v8H3zm10 0h8v8h-8z"/>,
@@ -111,7 +111,7 @@ const Ic=({n,s=18})=>{
   return <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">{P[n]||<circle cx="12" cy="12" r="10"/>}</svg>;
 };
 
-// ─── UI PRIMITIVES ────────────────────────────────────────────────────────────
+//  UI PRIMITIVES 
 const IS={width:"100%",background:"var(--inp)",border:"1px solid var(--bdr2)",borderRadius:".45rem",padding:".55rem .8rem",color:"var(--tx)",fontSize:".84rem",fontFamily:"'DM Sans',sans-serif",outline:"none",boxSizing:"border-box"};
 
 const Btn=({children,onClick,v="p",sm,disabled,full})=>{
@@ -185,11 +185,11 @@ const exportOrderPDF=(order)=>{
   const W=210,margin=14;
   const fmt2=v=>new Intl.NumberFormat("pt-BR",{style:"currency",currency:"BRL"}).format(v||0);
 
-  // ── Status atual espelhado ──
+  //  Status atual espelhado 
   const statusLabel=order.status==="recebido"?"RECEBIDO":order.status==="perdido"?"PERDIDO":order.status==="parcial"?"PARCIAL (em andamento)":"PENDENTE";
   const statusColor=order.status==="recebido"?[0,150,100]:order.status==="perdido"?[200,60,60]:order.status==="parcial"?[8,145,178]:[200,140,0];
 
-  // ── Cabeçalho ──
+  //  Cabeçalho 
   const showComp=typeof companyInfo!=="undefined"&&companyInfo.showInPDF!==false;
   const cname=showComp&&companyInfo.name?companyInfo.name:"CaixaPro · Tirzepatida";
   doc.setFillColor(13,15,26);
@@ -202,14 +202,14 @@ const exportOrderPDF=(order)=>{
   if(showComp&&companyInfo.phone)doc.text(companyInfo.phone,W-margin,16,{align:"right"});
   else doc.text(new Date().toLocaleString("pt-BR"),W-margin,16,{align:"right"});
 
-  // ── Badge de status ──
+  //  Badge de status 
   doc.setFillColor(...statusColor);
   doc.roundedRect(W-margin-50,26,50,10,2,2,"F");
   doc.setTextColor(255,255,255);
   doc.setFontSize(8);doc.setFont("helvetica","bold");
   doc.text(statusLabel,W-margin-25,32,{align:"center"});
 
-  // ── Info do pedido ──
+  //  Info do pedido 
   doc.setFontSize(11);doc.setFont("helvetica","bold");doc.setTextColor(40,40,70);
   doc.text("PEDIDO #"+order.id.slice(0,8).toUpperCase(),margin,33);
   doc.setFontSize(9);doc.setFont("helvetica","normal");
@@ -229,7 +229,7 @@ const exportOrderPDF=(order)=>{
     doc.text("Obs: "+order.notes,margin,y);y+=8;
   }
 
-  // ── Tabela de itens COM STATUS DE RECEBIMENTO ──
+  //  Tabela de itens COM STATUS DE RECEBIMENTO 
   y+=3;
   doc.setFontSize(10);doc.setFont("helvetica","bold");doc.setTextColor(79,94,240);
   doc.text("ITENS DO PEDIDO",margin,y);y+=4;
@@ -262,7 +262,7 @@ const exportOrderPDF=(order)=>{
   });
   y=doc.lastAutoTable.finalY+8;
 
-  // ── Resumo financeiro ATUALIZADO ──
+  //  Resumo financeiro ATUALIZADO 
   const totalPaid=(order.initial_value||0)+(order.remaining_paid||0);
   const stillOwed=Math.max(0,(order.total_value||0)-totalPaid);
   doc.setFontSize(10);doc.setFont("helvetica","bold");doc.setTextColor(79,94,240);
@@ -284,7 +284,7 @@ const exportOrderPDF=(order)=>{
     y+=9;
   });
 
-  // ── Progresso itens recebidos ──
+  //  Progresso itens recebidos 
   y+=6;
   const recCount=items.filter(i=>i.received).length;
   const totalCount=items.length;
@@ -295,7 +295,7 @@ const exportOrderPDF=(order)=>{
   doc.setFillColor(...statusColor);doc.rect(margin,y,(W-margin*2)*(pct/100),4,"F");
   y+=12;
 
-  // ── Rodapé ──
+  //  Rodapé 
   doc.setFontSize(7.5);doc.setFont("helvetica","normal");doc.setTextColor(180,180,200);
   doc.line(margin,282,W-margin,282);
   const footerTxt=showComp&&companyInfo.name?companyInfo.name+" · "+new Date().toLocaleString("pt-BR"):"Documento gerado em "+new Date().toLocaleString("pt-BR");
@@ -322,7 +322,7 @@ const Donut=({segs=[],size=80})=>{
   </svg>;
 };
 
-// ─── TELA LOGIN ───────────────────────────────────────────────────────────────
+//  TELA LOGIN 
 function LoginScreen({onLogin,dark}){
   const[user,setUser]   = useState("");
   const[pw_,setPw]      = useState("");
@@ -377,7 +377,7 @@ function LoginScreen({onLogin,dark}){
   );
 }
 
-// ─── ANALYTICS ────────────────────────────────────────────────────────────────
+//  ANALYTICS 
 function Analytics({onClose,sales,cashTx,products,clients,dark,receivables=[],orders=[]}){
   const[range,setRange]=useState("30d");
   const[cf,setCf]=useState(""),ct=useState("");
@@ -573,15 +573,15 @@ function Analytics({onClose,sales,cashTx,products,clients,dark,receivables=[],or
 }
 
 
-// ─── TELA DE NOTÍCIAS ────────────────────────────────────────────────────────
-// ─── APP PRINCIPAL ────────────────────────────────────────────────────────────
+//  TELA DE NOTÍCIAS 
+//  APP PRINCIPAL 
 export default function App(){
   // Tema
   const[dark,setDark]=useState(getTheme);
   useEffect(()=>{document.body.classList.toggle("light",!dark);},[dark]);
   const toggle=()=>setDark(v=>{const nv=!v;setTheme(nv);return nv;});
 
-  // ── Responsividade ──────────────────────────────────────────────
+  //  Responsividade 
   const[vw,setVw]=useState(()=>typeof window!=="undefined"?window.innerWidth:1024);
   useEffect(()=>{
     const h=()=>setVw(window.innerWidth);
@@ -626,7 +626,7 @@ export default function App(){
   const[importCalc,setImportCalc]=useState({totalCost:"",qty:"",extras:""});
   const[receivables,setReceivables]=useState([]);
   const[recForm,setRecForm]=useState({client_id:"",client_name:"",description:"",value:"",due_date:""});
-  // ── Config global ──────────────────────────────────────────────
+  //  Config global 
   const[configSection,setConfigSection]=useState("usuarios");
   const[dynCats,setDynCats]=useState(DEFAULT_CATS);
   const[dynPays,setDynPays]=useState([]);
@@ -640,7 +640,7 @@ export default function App(){
   const activeSimplePays=dynPays.length>0?dynPays.filter(p=>!["Débito","Crédito à Vista","Crédito Parcelado"].includes(p)):PAYS_SIMPLES;
   const activeCats=dynCats.length>0?dynCats:DEFAULT_CATS;
 
-  // ── Pedidos ────────────────────────────────────────────────────
+  //  Pedidos 
   const[orders,setOrders]=useState([]);
   const[showOrderModal,setShowOrderModal]=useState(false);
   const[showReceiveModal,setShowReceiveModal]=useState(null); // order object
@@ -652,7 +652,7 @@ export default function App(){
   const[orderNotes,setOrderNotes]=useState("");
   const[receiveExtra,setReceiveExtra]=useState(""); // extra payment on receipt
   const[receiveChecked,setReceiveChecked]=useState({});
-  // ── Frete ─────────────────────────────────────────────────────
+  //  Frete 
   const defaultFreteConfig={
     origens:[
       {id:"1",name:"Ponto 1",address:"",lat:null,lon:null},
@@ -692,7 +692,7 @@ export default function App(){
 
   // Forms defaults
   const FP={code:"",name:"",description:"",category:"tirzepatida",unit:"ampola",cost_per_unit:"",price_per_unit:"",units_per_pack:"1",batch:"",expiry:"",stock_qty:"0",min_stock:"5",supplier_id:""};
-  // ── CART STATE ──
+  //  CART STATE 
   const newCartItem=()=>({key:uid(),product_id:"",product_name:"",unit:"un",quantity:1,unit_price:0});
   const[cartItems,setCartItems]=useState([newCartItem()]);
   const[cartClient,setCartClient]=useState({id:"",name:""});
@@ -796,7 +796,7 @@ export default function App(){
   const canEdit=cu?.role==="admin"||cu?.role==="operator";
 
   // Sale handlers
-  // ── CART HELPERS ──
+  //  CART HELPERS 
   const cartSetProd=(key,pid)=>{
     const p=products.find(x=>x.id===pid);
     setCartItems(items=>items.map(i=>i.key!==key?i:{...i,
@@ -1032,8 +1032,8 @@ export default function App(){
     }catch(ex){toast$("Erro de conexão: "+ex.message,"#f56565");}
   };
 
-  // ── RECEBÍVEIS ──────────────────────────────────────────────────
-  // ── CARD TAX HELPERS ────────────────────────────────────────────
+  //  RECEBÍVEIS 
+  //  CARD TAX HELPERS 
   const getCardTaxRate=(brand,mode)=>{
     const t=cardTaxes[brand]||DEFAULT_TAXES[brand]||{};
     return parseFloat(t[mode])||0;
@@ -1072,7 +1072,7 @@ export default function App(){
   const cartInstallmentNet=cartPayment==="Crédito Parcelado"&&cartParcelas>0?cartNetTotal/cartParcelas:0;
 
 
-  // ── PEDIDOS HELPERS ────────────────────────────────────────────
+  //  PEDIDOS HELPERS 
   const loadOrders=async()=>{
     const{data}=await supabase.from("orders").select("*").order("created_at",{ascending:false});
     if(data)setOrders(data);
@@ -1197,7 +1197,7 @@ export default function App(){
   };
 
 
-  // ── FRETE HELPERS ───────────────────────────────────────────────
+  //  FRETE HELPERS 
   const saveToSettings=async(key,value,label="Configuração")=>{
     try{
       await supabase.from("app_settings").upsert({
@@ -1207,7 +1207,7 @@ export default function App(){
     }catch(e){toast$("Erro: "+e.message,"#f56565");}
   };
 
-  // ── ESTOQUE SIMPLES ─────────────────────────────────────────────
+  //  ESTOQUE SIMPLES 
   const deductStock=async(productId,qty)=>{
     if(!productId||qty<=0)return;
     const prod=products.find(p=>p.id===productId);
@@ -1351,7 +1351,7 @@ export default function App(){
       if(totalPaid>0)msg+=" · "+fmt(totalPaid)+" revertido(s) do caixa";
       toast$(msg,"#f59e0b");
     }catch(ex){toast$("Erro: "+ex.message,"#f56565");}
-  };───────────────────────────────
+  };
 
 
 
@@ -1576,13 +1576,13 @@ export default function App(){
     </div>;
   };
 
-  // ── RENDER LOGIN ──
+  //  RENDER LOGIN 
   if(!cu)return(<>
     <style>{`@import url('https://fonts.googleapis.com/css2?family=Syne:wght@700;800&family=DM+Sans:wght@400;500;600&display=swap');@keyframes loginShake{0%,100%{transform:translateX(0)}20%{transform:translateX(-8px)}40%{transform:translateX(8px)}60%{transform:translateX(-6px)}80%{transform:translateX(6px)}}`}</style>
     <LoginScreen onLogin={login} dark={dark}/>
   </>);
 
-  // ── RENDER APP ──
+  //  RENDER APP 
   return(<>
     <style>{`@import url('https://fonts.googleapis.com/css2?family=Syne:wght@700;800&family=DM+Sans:wght@400;500;600&display=swap');@keyframes fadeUp{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}input[type=date]::-webkit-calendar-picker-indicator{filter:${dark?"invert(.5)":"none"}}`}</style>
 
@@ -1591,7 +1591,7 @@ export default function App(){
 
     <div style={{minHeight:"100vh",background:"var(--bg)",fontFamily:"'DM Sans',sans-serif",color:"var(--tx)"}}>
 
-      {/* ── TOP BAR ── */}
+      {/*  TOP BAR  */}
       <div style={{background:"var(--bg2)",borderBottom:"1px solid var(--bdr)",padding:".6rem 1rem",display:"flex",alignItems:"center",justifyContent:"space-between",position:"sticky",top:0,zIndex:50,transition:"background .3s"}}>
         <div style={{display:"flex",alignItems:"center",gap:".4rem"}}>
           <div style={{width:24,height:24,borderRadius:".4rem",background:"linear-gradient(135deg,#4f5ef0,#10b981)",display:"inline-flex",alignItems:"center",justifyContent:"center",color:"#fff"}}><Ic n="syringe" s={14}/></div>
@@ -1614,7 +1614,7 @@ export default function App(){
         </div>
       </div>
 
-      {/* ── NAV ── */}
+      {/*  NAV  */}
       <div style={{background:"var(--bg2)",borderBottom:"1px solid var(--bdr)",padding:"0 .4rem",display:"flex",overflowX:"auto",transition:"background .3s"}}>
         {nav.map(item=>(
           <button key={item.id} onClick={()=>{setTab(item.id);setSearch("");setFcat("all");}} style={{display:"flex",alignItems:"center",gap:".28rem",padding:isMobile?".5rem .5rem":".58rem .7rem",background:"none",border:"none",fontSize:isMobile?".68rem":".72rem",fontFamily:"'DM Sans',sans-serif",fontWeight:600,color:tab===item.id?"var(--navon)":"var(--navoff)",borderBottom:tab===item.id?"2px solid #4f5ef0":"2px solid transparent",transition:"all .2s",whiteSpace:"nowrap"}}>
@@ -1624,7 +1624,7 @@ export default function App(){
         ))}
       </div>
 
-      {/* ── CONTEÚDO ── */}
+      {/*  CONTEÚDO  */}
       <div style={{maxWidth:960,margin:"0 auto",padding:isMobile?".6rem .5rem":".9rem .8rem"}}>
 
         {/* ══ DASHBOARD ══ */}
@@ -2381,7 +2381,7 @@ export default function App(){
               ))}
             </div>
 
-            {/* ── USUÁRIOS ── */}
+            {/*  USUÁRIOS  */}
             {configSection==="usuarios"&&(
               <div>
                 <div style={{display:"flex",justifyContent:"flex-end",marginBottom:".65rem"}}>
@@ -2407,7 +2407,7 @@ export default function App(){
               </div>
             )}
 
-            {/* ── FORNECEDORES ── */}
+            {/*  FORNECEDORES  */}
             {configSection==="fornecedores"&&(
               <div>
                 <div style={{display:"flex",justifyContent:"flex-end",marginBottom:".65rem"}}>
@@ -2432,7 +2432,7 @@ export default function App(){
               </div>
             )}
 
-            {/* ── TAXAS CARTÃO ── */}
+            {/*  TAXAS CARTÃO  */}
             {configSection==="cartoes"&&(()=>{
               const lt=localTaxes;const setLt=setLocalTaxes;
               return(
@@ -2469,7 +2469,7 @@ export default function App(){
               );
             })()}
 
-            {/* ── FRETE ── */}
+            {/*  FRETE  */}
             {configSection==="frete"&&(()=>{
               const lf=localFrete||freteConfig;const setLf=setLocalFrete;
               return(
@@ -2519,7 +2519,7 @@ export default function App(){
               );
             })()}
 
-            {/* ── CATEGORIAS ── */}
+            {/*  CATEGORIAS  */}
             {configSection==="categorias"&&(
               <div>
                 <div style={{background:"var(--infobox)",borderRadius:".45rem",padding:".5rem .85rem",marginBottom:".85rem",fontSize:".73rem",color:"#4f5ef0"}}>🏷️ Categorias aparecem no cadastro de produtos e nos filtros de estoque.</div>
@@ -2561,7 +2561,7 @@ export default function App(){
               </div>
             )}
 
-            {/* ── FORMAS DE PAGAMENTO ── */}
+            {/*  FORMAS DE PAGAMENTO  */}
             {configSection==="pagamentos"&&(
               <div>
                 <div style={{background:"var(--infobox)",borderRadius:".45rem",padding:".5rem .85rem",marginBottom:".85rem",fontSize:".73rem",color:"#4f5ef0"}}>💰 Formas de pagamento adicionais aparecem no seletor de Nova Venda (além de Débito, Crédito e Parcelado que são fixos).</div>
@@ -2591,7 +2591,7 @@ export default function App(){
               </div>
             )}
 
-            {/* ── METAS ── */}
+            {/*  METAS  */}
             {configSection==="metas"&&(()=>{
               const MONTHS=["Janeiro","Fevereiro","Março","Abril","Maio","Junho","Julho","Agosto","Setembro","Outubro","Novembro","Dezembro"];
               const gYear=goalYear;const setGYear=setGoalYear;
@@ -2643,7 +2643,7 @@ export default function App(){
             })()}
 
 
-            {/* ── EMPRESA ── */}
+            {/*  EMPRESA  */}
             {configSection==="empresa"&&(()=>{
               const ci=localCI||companyInfo;const setCi=setLocalCI;
               return(
@@ -2770,7 +2770,7 @@ export default function App(){
         {/* Info banner */}
         <div style={{background:"var(--infobox)",borderRadius:".45rem",padding:".5rem .8rem",marginBottom:"1rem",fontSize:".72rem",color:"#4f5ef0",display:"flex",gap:".35rem",alignItems:"center"}}><Ic n="info" s={12}/>Múltiplos produtos · Preço 0 = cortesia (registra custo) · Baixa estoque automática</div>
 
-        {/* ── ITENS DO CARRINHO ── */}
+        {/*  ITENS DO CARRINHO  */}
         <div style={{marginBottom:"1rem"}}>
           <div style={{fontSize:".68rem",color:"var(--sub)",textTransform:"uppercase",letterSpacing:".06em",marginBottom:".5rem",fontWeight:700}}>
             🛒 Itens da Venda
@@ -2854,7 +2854,7 @@ export default function App(){
           </button>
         </div>
 
-        {/* ── ENTREGA ── */}
+        {/*  ENTREGA  */}
         <div style={{background:"var(--pill)",border:`1px solid ${cartDelivery?"#f59e0b40":"var(--bdr)"}`,borderRadius:".6rem",padding:".85rem",marginBottom:"1rem",transition:"border-color .25s"}}>
 
           {/* Toggle flag entregador */}
@@ -2972,7 +2972,7 @@ export default function App(){
           </div>
         )}
 
-        {/* ── CLIENTE + PAGAMENTO ── */}
+        {/*  CLIENTE + PAGAMENTO  */}
         <R2>
           <Field label="Cliente" hint="opcional">
             <select
@@ -3044,7 +3044,7 @@ export default function App(){
         )}
         <Inp label="Observações" hint="opcional" placeholder="Ex: Entregar no período da tarde..." value={cartNotes} onChange={e=>setCartNotes(e.target.value)}/>
 
-        {/* ── RESUMO TOTAL ── */}
+        {/*  RESUMO TOTAL  */}
         <div style={{background:"linear-gradient(135deg,#4f5ef015,#10b98115)",border:"1px solid #4f5ef030",borderRadius:".65rem",padding:"1rem",marginBottom:"1rem"}}>
           <div style={{fontSize:".68rem",color:"var(--sub)",textTransform:"uppercase",letterSpacing:".06em",marginBottom:".6rem",fontWeight:700}}>💰 Resumo da Venda</div>
           <div style={{display:"flex",flexDirection:"column",gap:".3rem"}}>
@@ -3087,7 +3087,7 @@ export default function App(){
           </div>
         </div>
 
-        {/* ── AÇÕES ── */}
+        {/*  AÇÕES  */}
         <div style={{display:"flex",gap:".5rem",justifyContent:"space-between",alignItems:"center"}}>
           <button onClick={cartReset} style={{background:"none",border:"none",color:"var(--tx5)",fontSize:".75rem",fontFamily:"'DM Sans',sans-serif",cursor:"pointer",display:"flex",alignItems:"center",gap:".3rem"}}>
             <Ic n="trash" s={12}/> Limpar
