@@ -1206,21 +1206,7 @@ export default function App(){
       toast$("✅ "+label+" salva!");
     }catch(e){toast$("Erro: "+e.message,"#f56565");}
   };
-  // Detecta referência circular na hierarquia
-  const wouldLoop=(childId,parentId)=>{
-    let cur=parentId;
-    const seen=new Set();
-    while(cur){
-      if(cur===childId)return true;
-      if(seen.has(cur))return false;
-      seen.add(cur);
-      cur=products.find(p=>p.id===cur)?.parent_product_id||null;
-    }
-    return false;
-  };
 
-
-  // ── SINCRONIZAR HIERARQUIA (bottom-up com mg quando disponível) ─
   // ── ESTOQUE SIMPLES ─────────────────────────────────────────────
   const deductStock=async(productId,qty)=>{
     if(!productId||qty<=0)return;
@@ -1238,72 +1224,6 @@ export default function App(){
     await supabase.from("products").update({stock_qty:newQty}).eq("id",productId);
     setProds(prev=>prev.map(p=>p.id===productId?{...p,stock_qty:newQty}:p));
   };
-
-  const syncHierarchy=async()=>{
-    toast$("ℹ️ No modelo simplificado cada produto controla seu próprio estoque.","#4f5ef0");
-  };
-
-  const OLD_syncHierarchy_disabled=async()=>{
-    // First reset all partial counters for tirzepatida hierarchy
-    const tgWithPartial=products.filter(p=>p.category==="tirzepatida"&&(p.units_consumed_partial||0)>0);
-    for(const p of tgWithPartial){
-      await supabase.from("products").update({units_consumed_partial:0}).eq("id",p.id);
-    }
-    const tgProds=products.filter(p=>p.category==="tirzepatida"&&p.parent_product_id);
-    if(tgProds.length===0){toast$("Nenhum subproduto Tirzepatida para sincronizar.","#f59e0b");return;}
-    toast$("🔄 Sincronizando hierarquia...","#4f5ef0");
-    const updates={};
-    // Agrupa filhos por pai
-    const byParent={};
-    tgProds.forEach(child=>{
-      const k=child.parent_product_id;
-      if(!byParent[k])byParent[k]=[];
-      byParent[k].push(child);
-    });
-    // Para cada pai, calcula estoque baseado nos filhos
-    for(const[parentId,children] of Object.entries(byParent)){
-      const parent=products.find(p=>p.id===parentId);
-      if(!parent)continue;
-      const parentMg=parseFloat(parent.total_mg)||0;
-      let newParentQty;
-      if(parentMg>0){
-        // Cálculo por mg: soma o total de mg disponível nos filhos ÷ mg por unidade pai
-        const totalMgInChildren=children.reduce((a,c)=>{
-          const doseMg=parseFloat(c.dose_mg)||0;
-          return a+(doseMg>0?c.stock_qty*doseMg:0);
-        },0);
-        if(totalMgInChildren>0){
-          newParentQty=Math.round((totalMgInChildren/parentMg)*100)/100;
-        }
-      }
-      if(newParentQty===undefined){
-        // Fallback: média dos valores implícitos por cada filho
-        const implied=children.map(c=>{
-          const ratio=parseFloat(c.qty_per_parent)||1;
-          return c.stock_qty/ratio;
-        });
-        newParentQty=Math.round((implied.reduce((a,v)=>a+v,0)/implied.length)*100)/100;
-      }
-      updates[parentId]=newParentQty;
-    }
-    // Aplicar e propagar acima (avô, bisavô...)
-    let totalUpdated=0;
-    for(const[productId,newQty] of Object.entries(updates)){
-      await supabase.from("products").update({stock_qty:newQty}).eq("id",productId);
-      setProds(prev=>prev.map(p=>p.id===productId?{...p,stock_qty:newQty}:p));
-      totalUpdated++;
-    }
-    toast$("✅ Hierarquia sincronizada! "+totalUpdated+" produto(s) atualizados no estoque.");
-  };
-
-  const toggleUser=async(userId,active)=>{
-    try{
-      await supabase.from("app_users").update({active}).eq("id",userId);
-      setUsers(prev=>prev.map(u=>u.id===userId?{...u,active}:u));
-      toast$(active?"✅ Usuário ativado!":"⚠️ Usuário desativado.","#f59e0b");
-    }catch(e){toast$("Erro: "+e.message,"#f56565");}
-  };
-
 
   const saveCategories=async(cats)=>{setDynCats(cats);await saveToSettings("categories",cats,"Categorias");};
   const savePayments=async(pays)=>{setDynPays(pays);await saveToSettings("payments",pays,"Formas de pagamento");};
@@ -1431,12 +1351,7 @@ export default function App(){
       if(totalPaid>0)msg+=" · "+fmt(totalPaid)+" revertido(s) do caixa";
       toast$(msg,"#f59e0b");
     }catch(ex){toast$("Erro: "+ex.message,"#f56565");}
-  };
-
-
-  // ── HIERARQUIA DE PRODUTOS ─────────────────────────────────────
-  // Deduz/adiciona estoque em cascata pela hierarquia pai→filho
-  // ── CASCATA COM NÚMEROS INTEIROS ─────────────────────────────────
+  };───────────────────────────────
 
 
 
@@ -1771,39 +1686,6 @@ export default function App(){
             );
           })()}
 
-          {/* Painel de controle mg Tirzepatida */}
-          {(()=>{
-            const tgProds=products.filter(p=>p.category==="tirzepatida"&&p.total_mg);
-            if(tgProds.length===0)return null;
-            const totalMgDisp=tgProds.reduce((a,p)=>a+((p.stock_qty-(p.units_consumed_partial||0))*parseFloat(p.total_mg)),0);
-            const tgFracoes=products.filter(p=>p.category==="tirzepatida"&&p.dose_mg&&p.parent_product_id);
-            return(
-              <div style={{background:"linear-gradient(135deg,#8b44f015,#4f5ef010)",border:"1px solid #8b44f030",borderRadius:".75rem",padding:".75rem 1rem",marginBottom:".65rem"}}>
-                <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:".5rem"}}>
-                  <div style={{fontWeight:700,fontSize:".78rem",color:"#8b44f0",display:"flex",alignItems:"center",gap:".35rem"}}>💊 Controle Tirzepatida · mg disponíveis</div>
-                  <span style={{fontSize:".72rem",fontWeight:800,color:"#8b44f0",fontFamily:"'Syne',sans-serif"}}>{totalMgDisp.toFixed(1)}mg</span>
-                </div>
-                <div style={{display:"flex",gap:".4rem",flexWrap:"wrap"}}>
-                  {tgProds.map(p=>{
-                    const mgDisp=(p.stock_qty-(p.units_consumed_partial||0))*parseFloat(p.total_mg);
-                    const partial=p.units_consumed_partial||0;
-                    return(
-                      <div key={p.id} style={{fontSize:".68rem",color:"#8b44f0",background:"#8b44f015",borderRadius:".4rem",padding:".2rem .55rem",border:"1px solid #8b44f030"}}>
-                        {p.name.split(" ")[0]}: <strong>{p.stock_qty} un</strong>
-                        {partial>0&&<span style={{color:"#f59e0b"}}> · {(partial*parseFloat(p.total_mg)).toFixed(1)}mg em uso</span>}
-                      </div>
-                    );
-                  })}
-                  {tgFracoes.map(p=>(
-                    <div key={p.id} style={{fontSize:".68rem",color:"var(--tx4)",background:"var(--pill)",borderRadius:".4rem",padding:".2rem .55rem",border:"1px solid var(--bdr)"}}>
-                      {p.dose_mg}mg: <strong>{p.stock_qty} doses</strong>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            );
-          })()}
-
           {/* Informativos — A Receber + Meta + Alertas */}
           {(()=>{
             const now=new Date();
@@ -1958,7 +1840,7 @@ export default function App(){
             <div style={{display:"flex",gap:".4rem",flexWrap:"wrap",alignItems:"center"}}>
               <XBtn rows={fProds.map(p=>({Código:p.code,Nome:p.name,Cat:p.category,Unidade:p.unit||"un",Estoque:p.stock_qty,"Est.Mín":p.min_stock||5,Custo:fmt(p.cost_per_unit),Preço:fmt(p.price_per_unit),Markup:fmtPct(p.markup),Margem:fmtPct(p.margin),Fornecedor:p.supplier_name||"—"}))} name="estoque-caixapro" sheet="Estoque"/>
               <PBtn cols={[{k:"Nome",l:"Produto"},{k:"Cat",l:"Cat."},{k:"Estoque",l:"Estoque"},{k:"Custo",l:"Custo"},{k:"Preço",l:"Preço"},{k:"Markup",l:"Markup"},{k:"Fornecedor",l:"Fornecedor"}]} rows={fProds.map(p=>({Nome:p.name,Cat:p.category,Estoque:`${p.stock_qty} ${p.unit||"un"}`,Custo:fmt(p.cost_per_unit),Preço:fmt(p.price_per_unit),Markup:fmtPct(p.markup),Fornecedor:p.supplier_name||"—"}))} name="estoque-caixapro" title="Relatório de Estoque"/>
-              {canEdit&&<><Btn v="info" sm onClick={()=>setModal("stockEntry")}><Ic n="arrup" s={12}/>Entrada</Btn><Btn sm onClick={()=>setModal("produto")}><Ic n="plus" s={12}/>Produto</Btn>{products.some(p=>p.category==="tirzepatida"&&p.parent_product_id)&&<Btn sm v="warn" onClick={syncHierarchy}>🔄 Sinc.</Btn>}</>}
+              {canEdit&&<><Btn v="info" sm onClick={()=>setModal("stockEntry")}><Ic n="arrup" s={12}/>Entrada</Btn><Btn sm onClick={()=>setModal("produto")}><Ic n="plus" s={12}/>Produto</Btn></>}
             </div>
           </div>
           <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(120px,1fr))",gap:".6rem",marginBottom:".7rem"}}>
@@ -1997,13 +1879,12 @@ export default function App(){
                     <div style={{flex:1}}>
                       <div style={{display:"flex",alignItems:"center",gap:".38rem",flexWrap:"wrap",marginBottom:".2rem"}}>
                         <span style={{fontFamily:"'Syne',sans-serif",fontWeight:700,fontSize:".88rem",color:"var(--tx)"}}>{(activeCats.find(c=>c.key===p.category)||{icon:"📋"}).icon} {p.name}</span>
-                        {p.parent_product_id&&<Badge color="#8b44f0" sm>🧬 {products.find(x=>x.id===p.parent_product_id)?.name?.split(" ")[0]||"sub"}</Badge>}
+                        
                         {products.some(x=>x.parent_product_id===p.id)&&<Badge color="#4f5ef0" sm>📦 {products.filter(x=>x.parent_product_id===p.id).length}x sub</Badge>}
                       
                       {p.category==="tirzepatida"&&p.total_mg&&<Badge color="#8b44f0" sm>💊 {(p.stock_qty*parseFloat(p.total_mg)).toFixed(0)}mg</Badge>}
                       {p.dose_mg&&<Badge color="#8b44f0" sm>💊 {p.dose_mg}mg dose</Badge>}
-                      {p.parent_product_id&&p.qty_per_parent&&(
-                        <span style={{fontSize:".62rem",color:"#8b44f0"}}>
+                      >
                           ≡{(1/parseFloat(p.qty_per_parent)).toFixed(3)} {products.find(x=>x.id===p.parent_product_id)?.name?.split(" ").slice(0,2).join(" ")||""}
                         </span>
                       )}
@@ -2141,9 +2022,6 @@ export default function App(){
               <XBtn rows={products.map(p=>({Código:p.code,Nome:p.name,Custo:fmt(p.cost_per_unit),Preço:fmt(p.price_per_unit),Markup:fmtPct(p.markup),Margem:fmtPct(p.margin),Estoque:p.stock_qty,Fornecedor:p.supplier_name||"—"}))} name="produtos-caixapro" sheet="Produtos"/>
               <PBtn cols={[{k:"Nome",l:"Produto"},{k:"Custo",l:"Custo"},{k:"Preço",l:"Preço"},{k:"Markup",l:"Markup"},{k:"Estoque",l:"Estoque"},{k:"Fornecedor",l:"Fornecedor"}]} rows={products.map(p=>({Nome:p.name,Custo:fmt(p.cost_per_unit),Preço:fmt(p.price_per_unit),Markup:fmtPct(p.markup),Estoque:`${p.stock_qty} ${p.unit||"un"}`,Fornecedor:p.supplier_name||"—"}))} name="produtos-caixapro" title="Relatório de Produtos"/>
               <Btn sm v="ghost" onClick={()=>setShowImportCalc(true)}>🧮 Custo Importação</Btn>
-              {products.some(p=>p.category==="tirzepatida"&&p.parent_product_id)&&(
-                <Btn sm v="warn" onClick={syncHierarchy}>🔄 Sinc. Hierarquia</Btn>
-              )}
               <Btn sm v="ghost" onClick={()=>setModal("fornecedores")}><Ic n="supplier" s={12}/>Fornecedores</Btn>
               {canEdit&&<Btn sm onClick={()=>setModal("produto")}><Ic n="plus" s={12}/>Produto</Btn>}
             </div>
@@ -2495,7 +2373,6 @@ export default function App(){
                 {id:"pagamentos",l:"💰 Pagamentos"},
                 {id:"metas",l:"🎯 Metas"},
                 {id:"empresa",l:"🏢 Empresa"},
-                {id:"hierarquia",l:"🧬 Subprodutos"},
               ].map(s=>(
                 <button key={s.id} onClick={()=>{if(s.id==="empresa"&&!localCI)setLocalCI({...companyInfo});if(s.id==="cartoes")setLocalTaxes(JSON.parse(JSON.stringify(cardTaxes)));if(s.id==="frete")setLocalFrete(JSON.parse(JSON.stringify(freteConfig)));setConfigSection(s.id);}}
                   style={{padding:".38rem .75rem",borderRadius:".5rem",fontSize:".75rem",fontFamily:"'DM Sans',sans-serif",fontWeight:600,border:"none",background:configSection===s.id?"linear-gradient(135deg,#4f5ef0,#8b44f0)":"transparent",color:configSection===s.id?"#fff":"var(--navoff)",transition:"all .2s",whiteSpace:"nowrap"}}>
@@ -2765,59 +2642,6 @@ export default function App(){
               );
             })()}
 
-            {/* ── HIERARQUIA ── */}
-            {configSection==="hierarquia"&&(
-              <div>
-                <div style={{background:"var(--infobox)",borderRadius:".45rem",padding:".5rem .85rem",marginBottom:".85rem",fontSize:".73rem",color:"#8b44f0"}}>
-                  🧬 Defina qual produto é subproduto de qual. Vendas de subprodutos deduzem o estoque do produto pai automaticamente.
-                </div>
-                {products.length===0
-                  ?<p style={{color:"var(--tx5)",textAlign:"center",padding:"2rem"}}>Nenhum produto cadastrado.</p>
-                  :(()=>{
-                    const roots=products.filter(p=>!p.parent_product_id);
-                    const renderTree=(prod,depth)=>{
-                      const children=products.filter(p=>p.parent_product_id===prod.id);
-                      const totalSubStock=children.reduce((a,c)=>a+c.stock_qty,0);
-                      return(
-                        <div key={prod.id} style={{marginLeft:depth>0?"1.5rem":0}}>
-                          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:".6rem .85rem",borderRadius:".55rem",border:"1px solid "+(depth===0?"#4f5ef040":depth===1?"#8b44f030":"var(--bdr)"),background:depth===0?"#4f5ef008":depth===1?"#8b44f008":"transparent",marginBottom:".3rem"}}>
-                            <div style={{display:"flex",alignItems:"center",gap:".5rem"}}>
-                              {depth>0&&<span style={{color:"var(--tx5)",fontSize:".8rem"}}>{"└".repeat(depth)}</span>}
-                              <div>
-                                <div style={{fontWeight:700,fontSize:".82rem",color:"var(--tx)"}}>{prod.name}</div>
-                                <div style={{fontSize:".65rem",color:"var(--tx5)"}}>
-                                {prod.unit||"un"} · estoque: {prod.stock_qty}
-                                {prod.total_mg&&<span style={{color:"#8b44f0"}}> · {prod.total_mg}mg/un · {(prod.stock_qty*prod.total_mg).toFixed(1)}mg total</span>}
-                                {prod.dose_mg&&<span style={{color:"#8b44f0"}}> · dose: {prod.dose_mg}mg = {prod.qty_per_parent}x/pai</span>}
-                              </div>
-                              </div>
-                            </div>
-                            <div style={{display:"flex",alignItems:"center",gap:".5rem"}}>
-                              {children.length>0&&<Badge color="#4f5ef0" sm>{children.length} sub</Badge>}
-                              <span style={{fontWeight:700,color:prod.stock_qty<=(prod.min_stock||5)?"#f56565":"#10b981",fontFamily:"'Syne',sans-serif",fontSize:".82rem"}}>{prod.stock_qty} {prod.unit||"un"}</span>
-                            </div>
-                          </div>
-                          {children.map(child=>renderTree(child,depth+1))}
-                        </div>
-                      );
-                    };
-                    return <div style={{display:"grid",gap:".25rem"}}>{roots.map(p=>renderTree(p,0))}</div>;
-                  })()
-                }
-                <div style={{display:"flex",justifyContent:"flex-end",marginTop:".75rem",marginBottom:".5rem"}}>
-                  <Btn v="warn" onClick={syncHierarchy}><span style={{fontSize:14}}>🔄</span> Sincronizar Estoques da Hierarquia</Btn>
-                </div>
-                <div style={{background:"var(--card)",border:"1px solid var(--bdr)",borderRadius:".75rem",padding:"1rem",marginTop:".5rem"}}>
-                  <div style={{fontWeight:700,fontSize:".8rem",color:"var(--tx2)",marginBottom:".65rem"}}>ℹ️ Como usar</div>
-                  <div style={{fontSize:".75rem",color:"var(--tx4)",lineHeight:1.6}}>
-                    <div>1. Cadastre o produto principal (ex: Caixa T.G.) normalmente</div>
-                    <div>2. Cadastre o subproduto (ex: Fração 2,5mg) → selecione produto pai (Ampola) → informe a <strong>dose em mg</strong> (2,5mg) → o sistema calcula automaticamente que cabem {"{"}15÷2,5=6{"}"} doses</div>
-                    <div>3. Vender 1 Ampola deduzirá 1 do estoque de Ampola e 0.25 do estoque de Caixa (1÷4)</div>
-                    <div>4. Ao receber um Pedido de Compra de Caixas, o sistema expande automaticamente o estoque de Ampolas</div>
-                  </div>
-                </div>
-              </div>
-            )}
 
             {/* ── EMPRESA ── */}
             {configSection==="empresa"&&(()=>{
@@ -3340,120 +3164,13 @@ export default function App(){
     {modal==="produto"&&(
       <Modal title="Novo Produto" onClose={()=>setModal(null)} icon="product" wide>
         <R2><Inp label="Código" hint="auto" placeholder="PRD-001" value={pf.code} onChange={e=>setPf(f=>({...f,code:e.target.value}))}/><Sel label="Categoria" value={pf.category} onChange={e=>setPf(f=>({...f,category:e.target.value}))}>{activeCats.map(c=><option key={c.key} value={c.key}>{c.icon} {c.label}</option>)}</Sel></R2>
-      {/* 🧬 Hierarquia — APENAS para categoria Tirzepatida */}
-        {(pf.category==="tirzepatida"||!!pf.parent_product_id)&&<div style={{borderTop:"1px solid var(--bdr)",paddingTop:".75rem",marginTop:".25rem"}}>
-          <div style={{fontSize:".72rem",color:"#8b44f0",fontWeight:700,marginBottom:".55rem",display:"flex",alignItems:"center",gap:".35rem"}}>🧬 Hierarquia / Cascata <span style={{fontWeight:400,color:"var(--tx6)"}}>— opcional</span></div>
-          <div style={{marginBottom:".5rem"}}>
-            <div style={{fontSize:".65rem",color:"var(--sub)",marginBottom:".28rem"}}>Produto principal (pai)</div>
-            <select value={pf.parent_product_id||""} onChange={e=>setPf(f=>({...f,parent_product_id:e.target.value||null,dose_mg:"",qty_per_parent:""}))} style={IS}>
-              <option value="">— Produto independente (raiz) —</option>
-              {products.filter(p=>!wouldLoop(p.id,p.id)).map(p=>(
-                <option key={p.id} value={p.id}>{p.name}{p.parent_product_id?" (sub de "+products.find(x=>x.id===p.parent_product_id)?.name+")":""}</option>
-              ))}
-            </select>
-          </div>
-          {pf.parent_product_id&&(
-            <R2>
-              <div>
-                <div style={{fontSize:".65rem",color:"var(--sub)",marginBottom:".28rem"}}>💊 Dose em mg <span style={{color:"var(--tx6)"}}>desta fração/dose</span></div>
-                <div style={{display:"flex",gap:".4rem",alignItems:"center"}}>
-                  <input type="number" min="0.001" step="0.001" onFocus={e=>e.target.select()} value={pf.dose_mg||""} onChange={e=>{
-                    const dose=parseFloat(e.target.value)||0;
-                    const parent=products.find(p=>p.id===pf.parent_product_id);
-                    const parentMg=parseFloat(parent?.total_mg)||0;
-                    const auto=parentMg>0&&dose>0?String(Math.round((parentMg/dose)*1000)/1000):"";
-                    setPf(f=>({...f,dose_mg:e.target.value,...(auto?{qty_per_parent:auto}:{})}));
-                  }} placeholder="ex: 2.5" style={{...IS,width:80,color:"#8b44f0",fontWeight:700}}/>
-                  <span style={{fontSize:".78rem",color:"var(--tx4)"}}>mg</span>
-                </div>
-              </div>
-              <div>
-                <div style={{fontSize:".65rem",color:"var(--sub)",marginBottom:".28rem"}}>Qtd por unidade do pai <span style={{color:"var(--tx6)"}}>ex: 6</span></div>
-                <input type="number" min="0.001" step="0.001" onFocus={e=>e.target.select()} value={pf.qty_per_parent||""} onChange={e=>setPf(f=>({...f,qty_per_parent:e.target.value}))} placeholder="auto-calculado" style={{...IS,color:"#8b44f0",fontWeight:700}}/>
-              </div>
-            </R2>
-          )}
-          {pf.parent_product_id&&parseFloat(pf.qty_per_parent)>0&&(
-            <div style={{marginTop:".4rem",background:"#8b44f015",borderRadius:".4rem",padding:".4rem .7rem",fontSize:".72rem",color:"#8b44f0"}}>
-              💡 Vender 1 {pf.name||"un"} deduz <strong>{(1/parseFloat(pf.qty_per_parent)).toFixed(4)}</strong> de {products.find(p=>p.id===pf.parent_product_id)?.name||"produto pai"}
-              {pf.dose_mg&&<span> · <strong>{pf.dose_mg}mg</strong> consumidos</span>}
-            </div>
-          )}
-        </div>}
-        <Inp label="Nome *" placeholder="Ex: Tirzepatida 2.5mg, Isopor 10L..." value={pf.name} onChange={e=>setPf(f=>({...f,name:e.target.value}))}/>
-        <R2><Sel label="Fornecedor" hint="opcional" value={pf.supplier_id} onChange={e=>setPf(f=>({...f,supplier_id:e.target.value}))}><option value="">Nenhum</option>{suppliers.map(s=><option key={s.id} value={s.id}>{s.name}</option>)}</Sel><Inp label="Unidade" hint="ex: ampola, un, cx..." placeholder="ampola" value={pf.unit} onChange={e=>setPf(f=>({...f,unit:e.target.value}))}/></R2>
-        <R2><Inp label="Lote" placeholder="L2025001" value={pf.batch} onChange={e=>setPf(f=>({...f,batch:e.target.value}))}/><Inp label="Vencimento" type="date" value={pf.expiry} onChange={e=>setPf(f=>({...f,expiry:e.target.value}))}/></R2>
-        <R2><Inp label="Custo/un (R$) *" type="number" min="0" step="0.01" placeholder="0,00" value={pf.cost_per_unit} onChange={e=>setPf(f=>({...f,cost_per_unit:e.target.value}))}/><Inp label="Preço venda/un (R$) *" type="number" min="0" step="0.01" placeholder="0,00" value={pf.price_per_unit} onChange={e=>setPf(f=>({...f,price_per_unit:e.target.value}))}/></R2>
-        <MPreview cost={pf.cost_per_unit} price={pf.price_per_unit}/>
-        <R2><Inp label="Estoque inicial" type="number" min="0" onFocus={e=>e.target.select()} value={pf.stock_qty} onChange={e=>setPf(f=>({...f,stock_qty:e.target.value}))}/>
-      {!pf.parent_product_id&&(
-        <div>
-          <div style={{fontSize:".65rem",color:"var(--sub)",marginBottom:".28rem"}}>Total mg por unidade <span style={{color:"var(--tx6)"}}>(opcional — para T.G. e similares)</span></div>
-          <div style={{display:"flex",gap:".4rem",alignItems:"center"}}>
-            <input type="number" min="0" step="0.001" value={pf.total_mg||""} onChange={e=>setPf(f=>({...f,total_mg:e.target.value}))} placeholder="Ex: 15" style={{...IS,width:90,color:"#8b44f0",fontWeight:700}}/>
-            <span style={{fontSize:".8rem",color:"var(--tx5)"}}>mg / unidade</span>
-          </div>
-        </div>
-      )}<Inp label="Estoque mínimo" hint="alerta" type="number" min="0" value={pf.min_stock} onChange={e=>setPf(f=>({...f,min_stock:e.target.value}))}/></R2>
-        <div style={{display:"flex",gap:".5rem",justifyContent:"space-between",alignItems:"center"}}>
-          <Btn v="ghost" sm onClick={()=>setModal("addSupp")}><Ic n="supplier" s={12}/>+ Fornecedor</Btn>
-          <div style={{display:"flex",gap:".5rem"}}><Btn v="ghost" onClick={()=>setModal(null)}>Cancelar</Btn><Btn onClick={addProduct}><Ic n="save" s={13}/>Salvar</Btn></div>
-        </div>
-      </Modal>
-    )}
-
-    {/* Editar produto */}
-    {modal==="editProd"&&editing&&(
-      <Modal title="Editar Produto" onClose={()=>{setModal(null);setEditing(null);}} icon="edit" wide>
-        <R2><Inp label="Código" value={editing.code||""} onChange={e=>setEditing(v=>({...v,code:e.target.value}))}/><Sel label="Categoria" value={editing.category||"outro"} onChange={e=>setEditing(v=>({...v,category:e.target.value}))}>{activeCats.map(c=><option key={c.key} value={c.key}>{c.icon} {c.label}</option>)}</Sel></R2>
-      {/* 🧬 Hierarquia — APENAS para categoria Tirzepatida */}
-        {(editing.category==="tirzepatida"||!!editing.parent_product_id)&&<div style={{borderTop:"1px solid var(--bdr)",paddingTop:".75rem",marginTop:".25rem"}}>
-          <div style={{fontSize:".72rem",color:"#8b44f0",fontWeight:700,marginBottom:".55rem",display:"flex",alignItems:"center",gap:".35rem"}}>🧬 Hierarquia / Cascata <span style={{fontWeight:400,color:"var(--tx6)"}}>— opcional</span></div>
-          <div style={{marginBottom:".5rem"}}>
-            <div style={{fontSize:".65rem",color:"var(--sub)",marginBottom:".28rem"}}>Produto principal (pai)</div>
-            <select value={editing.parent_product_id||""} onChange={e=>setEditing(v=>({...v,parent_product_id:e.target.value||null,dose_mg:"",qty_per_parent:""}))} style={IS}>
-              <option value="">— Produto independente (raiz) —</option>
-              {products.filter(p=>p.id!==editing.id&&!wouldLoop(editing.id,p.id)).map(p=>(
-                <option key={p.id} value={p.id}>{p.name}{p.parent_product_id?" (sub de "+products.find(x=>x.id===p.parent_product_id)?.name+")":""}</option>
-              ))}
-            </select>
-          </div>
-          {editing.parent_product_id&&(
-            <R2>
-              <div>
-                <div style={{fontSize:".65rem",color:"var(--sub)",marginBottom:".28rem"}}>💊 Dose em mg <span style={{color:"var(--tx6)"}}>desta fração/dose</span></div>
-                <div style={{display:"flex",gap:".4rem",alignItems:"center"}}>
-                  <input type="number" min="0.001" step="0.001" onFocus={e=>e.target.select()} value={editing.dose_mg||""} onChange={e=>{
-                    const dose=parseFloat(e.target.value)||0;
-                    const parent=products.find(p=>p.id===editing.parent_product_id);
-                    const parentMg=parseFloat(parent?.total_mg)||0;
-                    const auto=parentMg>0&&dose>0?String(Math.round((parentMg/dose)*1000)/1000):"";
-                    setEditing(v=>({...v,dose_mg:e.target.value,...(auto?{qty_per_parent:auto}:{})}));
-                  }} placeholder="ex: 2.5" style={{...IS,width:80,color:"#8b44f0",fontWeight:700}}/>
-                  <span style={{fontSize:".78rem",color:"var(--tx4)"}}>mg</span>
-                </div>
-              </div>
-              <div>
-                <div style={{fontSize:".65rem",color:"var(--sub)",marginBottom:".28rem"}}>Qtd por unidade do pai <span style={{color:"var(--tx6)"}}>ex: 6</span></div>
-                <input type="number" min="0.001" step="0.001" onFocus={e=>e.target.select()} value={editing.qty_per_parent||""} onChange={e=>setEditing(v=>({...v,qty_per_parent:e.target.value}))} placeholder="auto-calculado" style={{...IS,color:"#8b44f0",fontWeight:700}}/>
-              </div>
-            </R2>
-          )}
-          {editing.parent_product_id&&parseFloat(editing.qty_per_parent)>0&&(
-            <div style={{marginTop:".4rem",background:"#8b44f015",borderRadius:".4rem",padding:".4rem .7rem",fontSize:".72rem",color:"#8b44f0"}}>
-              💡 Vender 1 {editing.name} deduz <strong>{(1/parseFloat(editing.qty_per_parent)).toFixed(4)}</strong> de {products.find(p=>p.id===editing.parent_product_id)?.name||"produto pai"}
-              {editing.dose_mg&&<span> · <strong>{editing.dose_mg}mg</strong> consumidos</span>}
-            </div>
-          )}
-        </div>}
-
-        <Inp label="Nome *" value={editing.name} onChange={e=>setEditing(v=>({...v,name:e.target.value}))}/>
+                <Inp label="Nome *" value={editing.name} onChange={e=>setEditing(v=>({...v,name:e.target.value}))}/>
         <R2><Sel label="Fornecedor" value={editing.supplier_id||""} onChange={e=>setEditing(v=>({...v,supplier_id:e.target.value}))}><option value="">Nenhum</option>{suppliers.map(s=><option key={s.id} value={s.id}>{s.name}</option>)}</Sel><Inp label="Unidade" value={editing.unit||"un"} onChange={e=>setEditing(v=>({...v,unit:e.target.value}))}/></R2>
         <R2><Inp label="Lote" value={editing.batch||""} onChange={e=>setEditing(v=>({...v,batch:e.target.value}))}/><Inp label="Vencimento" type="date" value={editing.expiry||""} onChange={e=>setEditing(v=>({...v,expiry:e.target.value}))}/></R2>
         <R2><Inp label="Custo/un (R$)" type="number" min="0" step="0.01" value={editing.cost_per_unit} onChange={e=>setEditing(v=>({...v,cost_per_unit:e.target.value}))}/><Inp label="Preço venda/un (R$)" type="number" min="0" step="0.01" value={editing.price_per_unit} onChange={e=>setEditing(v=>({...v,price_per_unit:e.target.value}))}/></R2>
         <MPreview cost={editing.cost_per_unit} price={editing.price_per_unit}/>
         <R2><Inp label="Estoque atual" type="number" min="0" onFocus={e=>e.target.select()} value={editing.stock_qty} onChange={e=>setEditing(v=>({...v,stock_qty:e.target.value}))}/><Inp label="Estoque mínimo" type="number" min="0" value={editing.min_stock} onChange={e=>setEditing(v=>({...v,min_stock:e.target.value}))}/></R2>
-        {!editing.parent_product_id&&(
+        {editing.category==="tirzepatida"&&(
           <div>
             <div style={{fontSize:".65rem",color:"var(--sub)",marginBottom:".28rem"}}>Total mg / unidade <span style={{color:"var(--tx6)"}}>(opcional)</span></div>
             <div style={{display:"flex",gap:".4rem",alignItems:"center"}}>
