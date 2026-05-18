@@ -871,8 +871,8 @@ export default function App(){
 
       // 2. Baixar estoque de cada produto
       for(const item of validItems){
-        // Deduz estoque em cascata (propaga para produto pai automaticamente)
-        await cascadeStock(item.product_id,item.quantity,"subtract");
+        // Deduz estoque do produto vendido
+        await deductStock(item.product_id,item.quantity);
       }
 
       // 3. Montar lançamentos de caixa
@@ -1154,16 +1154,9 @@ export default function App(){
       for(const {index,qty,item} of checkedItems){
         const prod=products.find(p=>p.id===item.product_id||p.name===item.product_name);
         if(prod&&qty>0){
-          // Atualizar estoque do produto recebido
-          const newQty=Math.round((prod.stock_qty+qty)*100)/100;
-          await supabase.from("products").update({stock_qty:newQty}).eq("id",prod.id);
-          setProds(prev=>prev.map(p=>p.id===prod.id?{...p,stock_qty:newQty}:p));
+          // Adiciona estoque direto no produto recebido
+          await restoreStock(prod.id,qty);
           receivedNames.push(item.product_name+" ("+qty+")");
-          // Expandir automaticamente para subprodutos (ex: Caixa → Ampolas → Frações)
-          const children=products.filter(c=>c.parent_product_id===prod.id&&parseFloat(c.qty_per_parent)>0);
-          if(children.length>0){
-            await expandProductToChildren(prod.id,qty);
-          }
         }
         // Marcar item como recebido no JSON
         allItems[index]={...allItems[index],received:true,received_qty:qty,received_date:today()};
@@ -1228,7 +1221,29 @@ export default function App(){
 
 
   // ── SINCRONIZAR HIERARQUIA (bottom-up com mg quando disponível) ─
+  // ── ESTOQUE SIMPLES ─────────────────────────────────────────────
+  const deductStock=async(productId,qty)=>{
+    if(!productId||qty<=0)return;
+    const prod=products.find(p=>p.id===productId);
+    if(!prod)return;
+    const newQty=Math.max(0,Math.round(((prod.stock_qty||0)-qty)*100)/100);
+    await supabase.from("products").update({stock_qty:newQty}).eq("id",productId);
+    setProds(prev=>prev.map(p=>p.id===productId?{...p,stock_qty:newQty}:p));
+  };
+
+  const restoreStock=async(productId,qty)=>{
+    if(!productId||qty<=0)return;
+    const{data}=await supabase.from("products").select("stock_qty").eq("id",productId).single();
+    const newQty=Math.round(((parseFloat(data?.stock_qty)||0)+qty)*100)/100;
+    await supabase.from("products").update({stock_qty:newQty}).eq("id",productId);
+    setProds(prev=>prev.map(p=>p.id===productId?{...p,stock_qty:newQty}:p));
+  };
+
   const syncHierarchy=async()=>{
+    toast$("ℹ️ No modelo simplificado cada produto controla seu próprio estoque.","#4f5ef0");
+  };
+
+  const OLD_syncHierarchy_disabled=async()=>{
     // First reset all partial counters for tirzepatida hierarchy
     const tgWithPartial=products.filter(p=>p.category==="tirzepatida"&&(p.units_consumed_partial||0)>0);
     for(const p of tgWithPartial){
@@ -1288,6 +1303,7 @@ export default function App(){
       toast$(active?"✅ Usuário ativado!":"⚠️ Usuário desativado.","#f59e0b");
     }catch(e){toast$("Erro: "+e.message,"#f56565");}
   };
+
 
   const saveCategories=async(cats)=>{setDynCats(cats);await saveToSettings("categories",cats,"Categorias");};
   const savePayments=async(pays)=>{setDynPays(pays);await saveToSettings("payments",pays,"Formas de pagamento");};
@@ -1398,11 +1414,8 @@ export default function App(){
           if(!item.received)continue;
           const qtyToRevert=item.received_qty||item.qty;
           const prod=products.find(p=>p.id===item.product_id||p.name===item.product_name);
-          if(prod&&qtyToRevert>0){
-            await supabase.from("products")
-              .update({stock_qty:Math.max(0,prod.stock_qty-qtyToRevert)})
-              .eq("id",prod.id);
-          }
+          const oid=item.product_id||(products.find(p=>p.name===item.product_name)?.id);
+          if(oid&&qtyToRevert>0)await deductStock(oid,qtyToRevert);
         }
       }
       // 2. Reverter TODOS os pagamentos lançados no caixa (sinal + recebimentos)
@@ -1424,112 +1437,8 @@ export default function App(){
   // ── HIERARQUIA DE PRODUTOS ─────────────────────────────────────
   // Deduz/adiciona estoque em cascata pela hierarquia pai→filho
   // ── CASCATA COM NÚMEROS INTEIROS ─────────────────────────────────
-  // Acumula consumo parcial no pai; só deduz quando atingir 1 unidade inteira
-  const cascadeStock=async(productId,qty,direction,visited=new Set())=>{
-    if(visited.has(productId)||!productId||qty<=0)return;
-    visited.add(productId);
-    // Busca dado atual do DB (sempre fresco para evitar estado stale)
-    const{data:prod}=await supabase.from("products").select("*").eq("id",productId).single();
-    if(!prod)return;
 
-    if(direction==="subtract"){
-      // 1. Deduzir do produto atual (inteiro)
-      const intQty=Math.max(1,Math.round(qty));
-      const newQty=Math.max(0,prod.stock_qty-intQty);
-      await supabase.from("products").update({stock_qty:newQty}).eq("id",productId);
-      setProds(prev=>prev.map(p=>p.id===productId?{...p,stock_qty:newQty}:p));
 
-      // 2. Propagar ao pai com controle de acumulador parcial
-      if(prod.parent_product_id&&parseFloat(prod.qty_per_parent)>0){
-        const ratio=parseFloat(prod.qty_per_parent);
-        const{data:parent}=await supabase.from("products").select("*").eq("id",prod.parent_product_id).single();
-        if(!parent)return;
-        // Acumula consumo fracionado
-        const partialAdded=intQty/ratio;
-        const newPartial=Math.round(((parent.units_consumed_partial||0)+partialAdded)*10000)/10000;
-        const intDeduct=Math.floor(newPartial);
-        const remaining=Math.round((newPartial-intDeduct)*10000)/10000;
-        // Só atualiza o pai — sem deduzir stock ainda (apenas partial)
-        await supabase.from("products").update({units_consumed_partial:remaining,...(intDeduct>0?{stock_qty:Math.max(0,parent.stock_qty-intDeduct)}:{})}).eq("id",parent.id);
-        setProds(prev=>prev.map(p=>p.id===parent.id?{...p,units_consumed_partial:remaining,...(intDeduct>0?{stock_qty:Math.max(0,p.stock_qty-intDeduct)}:{})}:p));
-        // Se atingiu unidade inteira: propaga ao avô
-        if(intDeduct>0&&!visited.has(parent.id)){
-          await cascadeStock(parent.id,intDeduct,"propagate_only",visited);
-        }
-      }
-    } else if(direction==="propagate_only"){
-      // Apenas propaga para o pai (já deduziu do atual acima)
-      if(prod.parent_product_id&&parseFloat(prod.qty_per_parent)>0){
-        const ratio=parseFloat(prod.qty_per_parent);
-        const{data:parent}=await supabase.from("products").select("*").eq("id",prod.parent_product_id).single();
-        if(!parent)return;
-        const partialAdded=qty/ratio;
-        const newPartial=Math.round(((parent.units_consumed_partial||0)+partialAdded)*10000)/10000;
-        const intDeduct=Math.floor(newPartial);
-        const remaining=Math.round((newPartial-intDeduct)*10000)/10000;
-        await supabase.from("products").update({units_consumed_partial:remaining,...(intDeduct>0?{stock_qty:Math.max(0,parent.stock_qty-intDeduct)}:{})}).eq("id",parent.id);
-        setProds(prev=>prev.map(p=>p.id===parent.id?{...p,units_consumed_partial:remaining,...(intDeduct>0?{stock_qty:Math.max(0,p.stock_qty-intDeduct)}:{})}:p));
-        if(intDeduct>0&&!visited.has(parent.id)){
-          await cascadeStock(parent.id,intDeduct,"propagate_only",visited);
-        }
-      }
-    } else {
-      // direction === "add" (reversal)
-      const newQty=prod.stock_qty+Math.round(qty);
-      await supabase.from("products").update({stock_qty:newQty}).eq("id",productId);
-      setProds(prev=>prev.map(p=>p.id===productId?{...p,stock_qty:newQty}:p));
-    }
-  };
-
-  // Reverter cascata (ao excluir venda)
-  const cascadeStockReverse=async(productId,qty,visited=new Set())=>{
-    if(visited.has(productId)||!productId||qty<=0)return;
-    visited.add(productId);
-    // 1. Restaurar produto atual (inteiro)
-    const{data:prod}=await supabase.from("products").select("*").eq("id",productId).single();
-    if(!prod)return;
-    const intQty=Math.max(1,Math.round(qty));
-    const newQty=prod.stock_qty+intQty;
-    await supabase.from("products").update({stock_qty:newQty}).eq("id",productId);
-    setProds(prev=>prev.map(p=>p.id===productId?{...p,stock_qty:newQty}:p));
-    // 2. Reverter acumulador parcial no pai
-    if(prod.parent_product_id&&parseFloat(prod.qty_per_parent)>0){
-      const ratio=parseFloat(prod.qty_per_parent);
-      const{data:parent}=await supabase.from("products").select("*").eq("id",prod.parent_product_id).single();
-      if(!parent)return;
-      const partialToRestore=intQty/ratio;
-      let newPartial=Math.round(((parent.units_consumed_partial||0)-partialToRestore)*10000)/10000;
-      let intRestore=0;
-      if(newPartial<0){
-        intRestore=Math.ceil(-newPartial);
-        newPartial=Math.round((newPartial+intRestore)*10000)/10000;
-      }
-      await supabase.from("products").update({units_consumed_partial:Math.max(0,newPartial),...(intRestore>0?{stock_qty:parent.stock_qty+intRestore}:{})}).eq("id",parent.id);
-      setProds(prev=>prev.map(p=>p.id===parent.id?{...p,units_consumed_partial:Math.max(0,newPartial),...(intRestore>0?{stock_qty:p.stock_qty+intRestore}:{})}:p));
-      if(intRestore>0&&!visited.has(parent.id)){
-        await cascadeStockReverse(parent.id,intRestore,visited);
-      }
-    }
-  };
-
-  // Expandir produto pai em filhos ao receber
-  const expandProductToChildren=async(productId,qty,visited=new Set())=>{
-    if(visited.has(productId))return; // evita loop circular
-    visited.add(productId);
-    // Busca filhos do produto — usa state local (mais rápido) OU refetch se necessário
-    const latestProds=products; // estado atual
-    const children=latestProds.filter(p=>p.parent_product_id===productId&&parseFloat(p.qty_per_parent)>0);
-    for(const child of children){
-      const childQty=Math.round(qty*parseFloat(child.qty_per_parent)*1000)/1000;
-      if(childQty<=0)continue;
-      const currentChild=latestProds.find(p=>p.id===child.id)||child;
-      const newQty=Math.round((currentChild.stock_qty+childQty)*100)/100;
-      await supabase.from("products").update({stock_qty:newQty}).eq("id",child.id);
-      setProds(prev=>prev.map(p=>p.id===child.id?{...p,stock_qty:newQty}:p));
-      // Recursão para próximo nível (ex: Ampola → Fração)
-      await expandProductToChildren(child.id,childQty,visited);
-    }
-  };
 
   const loadReceivables=async()=>{
     const{data}=await supabase.from("receivables").select("*").order("due_date",{ascending:true});
@@ -1576,12 +1485,8 @@ export default function App(){
       // 3. Reverter estoque de CADA item do batch
       for(const s of batchSales){
         // Reverter estoque em cascata (produto + pai + avô...)
-        if(s.product_id&&s.quantity>0){
-          await cascadeStockReverse(s.product_id,s.quantity);
-        } else {
-          const prod=products.find(p=>p.name===s.product_name);
-          if(prod&&s.quantity>0)await cascadeStockReverse(prod.id,s.quantity);
-        }
+        const dpid2=s.product_id||(products.find(p=>p.name===s.product_name)?.id);
+        if(dpid2&&s.quantity>0)await restoreStock(dpid2,s.quantity);
       }
 
       // 4. Excluir TODOS os registros de venda do batch
@@ -2094,10 +1999,8 @@ export default function App(){
                         <span style={{fontFamily:"'Syne',sans-serif",fontWeight:700,fontSize:".88rem",color:"var(--tx)"}}>{(activeCats.find(c=>c.key===p.category)||{icon:"📋"}).icon} {p.name}</span>
                         {p.parent_product_id&&<Badge color="#8b44f0" sm>🧬 {products.find(x=>x.id===p.parent_product_id)?.name?.split(" ")[0]||"sub"}</Badge>}
                         {products.some(x=>x.parent_product_id===p.id)&&<Badge color="#4f5ef0" sm>📦 {products.filter(x=>x.parent_product_id===p.id).length}x sub</Badge>}
-                      {p.category==="tirzepatida"&&(p.units_consumed_partial||0)>0&&(
-                        <Badge color="#f59e0b" sm>⚡ {((p.units_consumed_partial||0)*100).toFixed(0)}% cons.</Badge>
-                      )}
-                      {p.total_mg&&<Badge color="#8b44f0" sm>💊 {((p.stock_qty-(p.units_consumed_partial||0))*parseFloat(p.total_mg)).toFixed(0)}mg disp.</Badge>}
+                      
+                      {p.category==="tirzepatida"&&p.total_mg&&<Badge color="#8b44f0" sm>💊 {(p.stock_qty*parseFloat(p.total_mg)).toFixed(0)}mg</Badge>}
                       {p.dose_mg&&<Badge color="#8b44f0" sm>💊 {p.dose_mg}mg dose</Badge>}
                       {p.parent_product_id&&p.qty_per_parent&&(
                         <span style={{fontSize:".62rem",color:"#8b44f0"}}>
@@ -2849,7 +2752,7 @@ export default function App(){
                           <div style={{flex:1}}/>
                           <span style={{fontSize:".75rem",color:r.real>=r.goal&&r.goal>0?"#10b981":"var(--tx3)",fontWeight:600}}>{fmt(r.real)}</span>
                           <span style={{fontSize:".65rem",color:"var(--tx5)"}}>de</span>
-                          <div style={{fontSize:".85rem",fontWeight:700,color:"#4f5ef0",fontFamily:"'Syne',sans-serif",minWidth:90,textAlign:"right"}}>{r.goal>0?fmt(r.goal):<span style={{color:"var(--tx6)",fontSize:".72rem"}}>—</span>}</div>
+                          <input type="number" min="0" step="100" onFocus={e=>e.target.select()} value={r.goal||""} onChange={e=>saveMonthlyGoal(r.key,e.target.value)} placeholder="R$ meta..." style={{width:100,background:"var(--inp)",border:"1px solid var(--bdr2)",borderRadius:".35rem",padding:".3rem .5rem",color:"#4f5ef0",fontWeight:700,fontSize:".78rem",fontFamily:"'DM Sans',sans-serif",outline:"none",textAlign:"right"}}/>
                           <span style={{fontSize:".72rem",fontWeight:700,color:r.pct>=100?"#10b981":r.pct>=70?"#f59e0b":r.isPast&&r.goal>0?"#f56565":"var(--tx5)",minWidth:42,textAlign:"right"}}>{r.goal>0?fmtPct(r.pct):"—"}{r.pct>=100?" 🏆":""}</span>
                         </div>
                         <div style={{height:5,background:"var(--bdr)",borderRadius:3}}>
