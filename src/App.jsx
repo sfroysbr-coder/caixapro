@@ -1484,28 +1484,9 @@ export default function App(){
   const saveProduct=async()=>{
     const{markup,margin,profit}=calcM(editing.cost_per_unit,editing.price_per_unit);
     // Detectar se vínculo pai mudou
-    const prevParentId=products.find(p=>p.id===editing.id)?.parent_product_id||null;
-    const newParentId=editing.parent_product_id||null;
-    const parentChanged=newParentId&&newParentId!==prevParentId;
+
     const sup=suppliers.find(s=>s.id===editing.supplier_id);
     await supabase.from("products").update({code:editing.code,name:editing.name,description:editing.description,category:editing.category,unit:editing.unit,cost_per_unit:parseFloat(editing.cost_per_unit),price_per_unit:parseFloat(editing.price_per_unit),units_per_pack:parseInt(editing.units_per_pack)||1,batch:editing.batch,expiry:editing.expiry||null,stock_qty:parseInt(editing.stock_qty),min_stock:parseInt(editing.min_stock)||5,supplier_id:editing.supplier_id||null,supplier_name:sup?.name||null,markup,margin,profit,parent_product_id:editing.parent_product_id||null,qty_per_parent:parseFloat(editing.qty_per_parent)||1,total_mg:parseFloat(editing.total_mg)||null,dose_mg:parseFloat(editing.dose_mg)||null}).eq("id",editing.id);
-    // Se pai foi vinculado/alterado e filho tem estoque: sincronizar estoque pai
-    if(parentChanged){
-      const childQty=parseInt(editing.stock_qty)||0;
-      const ratio=parseFloat(editing.qty_per_parent)||1;
-      if(childQty>0&&ratio>0){
-        const parentProd=products.find(p=>p.id===newParentId);
-        if(parentProd){
-          const impliedParentQty=Math.round((childQty/ratio)*100)/100;
-          // Somar ao estoque atual do pai (não sobrescrever)
-          const newParentQty=Math.round((parentProd.stock_qty+impliedParentQty)*100)/100;
-          await supabase.from("products").update({stock_qty:newParentQty}).eq("id",newParentId);
-          setProds(prev=>prev.map(p=>p.id===newParentId?{...p,stock_qty:newParentQty}:p));
-          toast$("✅ Produto atualizado e estoque de "+parentProd.name+" ajustado (+"+impliedParentQty+" un → "+newParentQty+" un)");
-          setModal(null);setEditing(null);return;
-        }
-      }
-    }
     toast$("Produto atualizado!");setModal(null);setEditing(null);
   };
   const delProduct=async id=>{await supabase.from("products").delete().eq("id",id);toast$("Removido.","#f59e0b");setModal(null);setEditing(null);};
@@ -1880,14 +1861,9 @@ export default function App(){
                       <div style={{display:"flex",alignItems:"center",gap:".38rem",flexWrap:"wrap",marginBottom:".2rem"}}>
                         <span style={{fontFamily:"'Syne',sans-serif",fontWeight:700,fontSize:".88rem",color:"var(--tx)"}}>{(activeCats.find(c=>c.key===p.category)||{icon:"📋"}).icon} {p.name}</span>
                         
-                        {products.some(x=>x.parent_product_id===p.id)&&<Badge color="#4f5ef0" sm>📦 {products.filter(x=>x.parent_product_id===p.id).length}x sub</Badge>}
                       
                       {p.category==="tirzepatida"&&p.total_mg&&<Badge color="#8b44f0" sm>💊 {(p.stock_qty*parseFloat(p.total_mg)).toFixed(0)}mg</Badge>}
                       {p.dose_mg&&<Badge color="#8b44f0" sm>💊 {p.dose_mg}mg dose</Badge>}
-                      >
-                          ≡{(1/parseFloat(p.qty_per_parent)).toFixed(3)} {products.find(x=>x.id===p.parent_product_id)?.name?.split(" ").slice(0,2).join(" ")||""}
-                        </span>
-                      )}
                         <Badge color={stkColor(p.stock_qty)} sm>{p.stock_qty<=0?"Zerado":p.stock_qty<=(p.min_stock||5)?"Baixo":"OK"}</Badge>
                         {p.supplier_name&&<Badge color="#8b44f0" sm>🏭 {p.supplier_name}</Badge>}
                         {days!==null&&days<=30&&<Badge color={expColor(days)} sm>{days<0?"Vencido":`Vcto ${days}d`}</Badge>}
