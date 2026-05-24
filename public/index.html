@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
   <meta charset="utf-8"/>
-  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,maximum-scale=1"/>
   <meta name="description" content="CaixaPro - Gestão Tirzepatida"/>
   <link rel="manifest" href="/manifest.json"/>
   <title>CaixaPro</title>
@@ -38,8 +38,8 @@
       --acard:linear-gradient(135deg,#eef1ff,#f5f7ff);--abdr:#c8ceee;
     }
     *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
-    *{-webkit-tap-highlight-color:transparent}
-    body{background:var(--bg);color:var(--tx);font-family:'DM Sans',sans-serif;min-height:100vh;transition:background .3s,color .3s;overflow-x:hidden}
+    *{-webkit-tap-highlight-color:transparent;touch-action:manipulation}
+    body{background:var(--bg);color:var(--tx);-webkit-text-size-adjust:100%;touch-action:manipulation;font-family:'DM Sans',sans-serif;min-height:100vh;transition:background .3s,color .3s;overflow-x:hidden}
     ::-webkit-scrollbar{width:4px;height:4px}
     ::-webkit-scrollbar-thumb{background:var(--bdr2);border-radius:2px}
     input::placeholder{color:var(--tx5)}

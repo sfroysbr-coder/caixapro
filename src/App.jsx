@@ -366,7 +366,7 @@ function LoginScreen({onLogin,dark}){
   };
 
   return(
-    <div style={{minHeight:"100vh",background:"var(--bg)",display:"flex",alignItems:"center",justifyContent:"center",padding:"1.25rem",position:"relative",overflow:"hidden"}}>
+    <div id="app-root" style={{minHeight:"100vh",background:dark?"#080a14":"#f0f4ff",display:"flex",alignItems:"center",justifyContent:"center",padding:"1.25rem",position:"relative",overflow:"hidden"}}>
       <div style={{position:"absolute",top:"-15%",left:"-10%",width:"50vw",height:"50vw",borderRadius:"50%",background:"radial-gradient(circle,#4f5ef020,transparent 70%)",pointerEvents:"none"}}/>
       <div style={{position:"absolute",bottom:"-15%",right:"-10%",width:"45vw",height:"45vw",borderRadius:"50%",background:"radial-gradient(circle,#10b98115,transparent 70%)",pointerEvents:"none"}}/>
       <div style={{width:"100%",maxWidth:380,background:"var(--login-bg)",border:"1px solid var(--bdr2)",borderRadius:"1.25rem",padding:"2rem 1.75rem",boxShadow:"0 30px 80px var(--shadow)",animation:shk?"loginShake .4s ease":"none",transition:"background .3s"}}>
@@ -1621,7 +1621,7 @@ export default function App(){
     {/* TOAST */}
     {toast&&<div style={{position:"fixed",bottom:"1.25rem",right:"1.25rem",zIndex:999,background:"var(--card)",border:`1px solid ${toast.color}50`,borderRadius:".65rem",padding:".65rem 1.1rem",display:"flex",alignItems:"center",gap:".45rem",fontSize:".82rem",color:toast.color,fontFamily:"'DM Sans',sans-serif",boxShadow:"0 8px 30px var(--shadow)",animation:"fadeUp .3s ease",maxWidth:320}}><Ic n="save" s={14}/>{toast.msg}</div>}
 
-    <div style={{minHeight:"100vh",background:"var(--bg)",fontFamily:"'DM Sans',sans-serif",color:"var(--tx)"}}>
+    <div id="app-root" style={{minHeight:"100vh",background:dark?"#080a14":"#f0f4ff",fontFamily:"'DM Sans',sans-serif",color:"var(--tx)"}}>
 
       {/*  TOP BAR  */}
       <div style={{background:"var(--bg2)",borderBottom:"1px solid var(--bdr)",padding:".6rem 1rem",display:"flex",alignItems:"center",justifyContent:"space-between",position:"sticky",top:0,zIndex:50,transition:"background .3s"}}>
@@ -3216,7 +3216,7 @@ export default function App(){
         </div>
       </Modal>
     )}
-modal==="editSale"&&editing&&(
+    {modal==="editSale"&&editing&&(
       <Modal title="Editar Venda" onClose={()=>{setModal(null);setEditing(null);}} icon="edit">
         <Inp label="Produto" value={editing.product_name} onChange={e=>setEditing(v=>({...v,product_name:e.target.value}))}/>
         <R2><Inp label="Quantidade" type="number" min="1" value={editing.quantity} onChange={e=>setEditing(v=>({...v,quantity:e.target.value}))}/><Inp label="Preço unit. (R$)" type="number" min="0" step="0.01" value={editing.unit_price} onChange={e=>setEditing(v=>({...v,unit_price:e.target.value}))}/></R2>
