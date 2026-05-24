@@ -4128,5 +4128,7 @@ modal==="editSale"&&editing&&(
         </div>
       </div>
     )}
-  </></ErrorBoundary>;
+  </></ErrorBoundary>
+  );
+}
 }
