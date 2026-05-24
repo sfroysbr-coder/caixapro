@@ -9,10 +9,7 @@ class ErrorBoundary extends React.Component{
       return React.createElement('div',{style:{padding:'2rem',fontFamily:'monospace',background:'#1a0000',color:'#f56565',minHeight:'100vh'}},
         React.createElement('h2',{style:{color:'#f59e0b',marginBottom:'1rem'}},'⚠️ Erro — Detalhe:'),
         React.createElement('pre',{style:{background:'#2a0000',padding:'1rem',borderRadius:'.5rem',fontSize:'.75rem',overflow:'auto',whiteSpace:'pre-wrap',maxHeight:'70vh'}},
-          String(this.state.error)+'
-
-'+(this.state.error&&this.state.error.stack?this.state.error.stack:'')
-        ),
+                    String(this.state.error)+'\n\n'+(this.state.error&&this.state.error.stack?this.state.error.stack:'')        ),
         React.createElement('button',{onClick:()=>this.setState({error:null,info:null}),style:{marginTop:'1rem',padding:'.5rem 1rem',background:'#4f5ef0',color:'#fff',border:'none',borderRadius:'.4rem',cursor:'pointer',fontFamily:'sans-serif'}},'Tentar novamente')
       );
     }
