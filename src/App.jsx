@@ -3172,7 +3172,6 @@ export default function App(){
     )}
 
     {/* Editar venda */}
-    {
     {/* ── EDITAR PRODUTO ── */}
     {modal==="editProd"&&editing&&(
       <Modal title={"✏️ "+editing.name} onClose={()=>{setModal(null);setEditing(null);}} icon="edit" wide>
