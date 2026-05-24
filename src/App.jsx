@@ -460,7 +460,7 @@ function Analytics({onClose,sales,cashTx,products,clients,dark,receivables=[],or
         <KCard label="Ticket médio" value={fmt(ticket)} color="#4f5ef0"/>
         <KCard label="Valor estoque" value={fmt(stockVal)} color="#8b44f0" icon="stock"/>
         <KCard label="Clientes" value={clients.length} color="#10b981" icon="client"/>
-        <KCard label="A Receber" value={fmt(receivables.filter(r=>!r.paid).reduce((a,r)=>a+r.value,0))} sub={receivables.filter(r=>!r.paid).length+" pendente(s)"} color="#f59e0b" icon="dollar"/>
+        <KCard label="A Receber" value={fmt((receivables||[]).filter(r=>!r.paid).reduce((a,r)=>a+r.value,0))} sub={receivables.filter(r=>!r.paid).length+" pendente(s)"} color="#f59e0b" icon="dollar"/>
       </div>
 
       <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))",gap:".85rem",marginBottom:".85rem"}}>
@@ -544,7 +544,7 @@ function Analytics({onClose,sales,cashTx,products,clients,dark,receivables=[],or
           ]},
           {title:"Pedidos & Compras",color:"#f59e0b",icon:"pkg",rows:[
             {l:"Pedidos pendentes",v:(orders||[]).filter(o=>o.status==="pendente"||o.status==="parcial").length+" pedido(s)",c:"#f59e0b"},
-            {l:"A pagar (restante)",v:fmt(orders.filter(o=>o.status==="pendente").reduce((a,o)=>a+o.remaining_value,0)),c:"#f56565"},
+            {l:"A pagar (restante)",v:fmt((orders||[]).filter(o=>o.status==="pendente").reduce((a,o)=>a+(o.remaining_value||0),0)),c:"#f56565"},
             {l:"Pedidos recebidos",v:(orders||[]).filter(o=>o.status==="recebido").length+" pedido(s)",c:"#10b981"},
             {l:"Total investido",v:fmt((orders||[]).reduce((a,o)=>a+(o.initial_value||0)+(o.remaining_paid||0),0)),c:"#4f5ef0"},
             {l:"💀 Perdas (sinais perdidos)",v:fmt((orders||[]).filter(o=>o.status==="perdido").reduce((a,o)=>a+o.initial_value,0)),c:"#f56565"},
@@ -1731,7 +1731,7 @@ export default function App(){
           {(()=>{
             const now=new Date();
             const monthStart=new Date(now.getFullYear(),now.getMonth(),1);
-            const monthRev=cashTx.filter(t=>t.type==="entrada"&&new Date(t.created_at)>=monthStart).reduce((a,t)=>a+t.value,0);
+            const monthRev=(cashTx||[]).filter(t=>t.type==="entrada"&&new Date(t.created_at)>=monthStart).reduce((a,t)=>a+t.value,0);
             const goal=parseFloat(monthGoal)||0;
             const pend=receivables.filter(r=>!r.paid);
             const pendVal=pend.reduce((a,r)=>a+r.value,0);
@@ -1743,7 +1743,7 @@ export default function App(){
                 const mName=MONTHS_ABR[now.getMonth()];
                 const key=now.getFullYear()+"-"+(now.getMonth()+1).toString().padStart(2,"0");
                 const mGoal=monthlyGoals[key]||parseFloat(monthGoal)||0;
-                const mReal=sales.filter(s=>{const d=new Date(s.created_at);return d>=monthStart&&d<=new Date(now.getFullYear(),now.getMonth()+1,0,23,59,59);}).reduce((a,s)=>a+s.total_price,0); // discount applied in batchRevenue
+                const mReal=(sales||[]).filter(s=>{const d=new Date(s.created_at||Date.now());return d>=monthStart&&d<=new Date(now.getFullYear(),now.getMonth()+1,0,23,59,59);}).reduce((a,s)=>a+s.total_price,0); // discount applied in batchRevenue
                 const mPct=mGoal>0?Math.min((mReal/mGoal)*100,100):0;
                 return(
                   <div style={{background:"linear-gradient(135deg,#4f5ef010,#10b98108)",border:"1px solid #4f5ef040",borderRadius:".65rem",padding:".7rem .85rem",marginBottom:".65rem"}}>
@@ -2241,7 +2241,7 @@ export default function App(){
               <KCard label="Pendentes" value={fmtN(orders.filter(o=>o.status==="pendente"||o.status==="parcial").length)} sub={fmt((orders||[]).filter(o=>o.status==="pendente"||o.status==="parcial").reduce((a,o)=>a+o.remaining_value,0))+" restante"} color="#f59e0b"/>
               <KCard label="Recebidos" value={fmtN((orders||[]).filter(o=>o.status==="recebido").length)} color="#10b981"/>
               <KCard label="Total pago" value={fmt((orders||[]).reduce((a,o)=>a+(o.initial_value||0)+(o.remaining_paid||0),0))} color="#4f5ef0"/>
-              <KCard label="A pagar" value={fmt(orders.filter(o=>o.status==="pendente").reduce((a,o)=>a+o.remaining_value,0))} color="#f56565"/>
+              <KCard label="A pagar" value={fmt((orders||[]).filter(o=>o.status==="pendente").reduce((a,o)=>a+(o.remaining_value||0),0))} color="#f56565"/>
             </div>
             {/* Lista pedidos */}
             {orders.length===0
@@ -3633,7 +3633,6 @@ modal==="editSale"&&editing&&(
                 </div>
               </div>
             ))}
-          </div>
           </div>
           <div style={{textAlign:"center",fontSize:".7rem",color:"var(--tx5)",display:"flex",alignItems:"center",justifyContent:"center",gap:".4rem"}}><span>Visualização das metas · Para editar acesse</span><button onClick={()=>{setShowGoals(false);setTab("config");setConfigSection("metas");}} style={{background:"none",border:"none",color:"#4f5ef0",fontSize:".72rem",fontFamily:"'DM Sans',sans-serif",fontWeight:700,cursor:"pointer",padding:0}}>⚙️ Config → 🎯 Metas</button></div>
         </Modal>
