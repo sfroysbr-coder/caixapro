@@ -1,4 +1,25 @@
 import React,{useState,useEffect,useCallback,useMemo}from"react";
+
+class ErrorBoundary extends React.Component{
+  constructor(p){super(p);this.state={error:null,info:null};}
+  static getDerivedStateFromError(e){return{error:e};}
+  componentDidCatch(e,info){this.setState({error:e,info:info});}
+  render(){
+    if(this.state.error){
+      return React.createElement('div',{style:{padding:'2rem',fontFamily:'monospace',background:'#1a0000',color:'#f56565',minHeight:'100vh'}},
+        React.createElement('h2',{style:{color:'#f59e0b',marginBottom:'1rem'}},'⚠️ Erro — Detalhe:'),
+        React.createElement('pre',{style:{background:'#2a0000',padding:'1rem',borderRadius:'.5rem',fontSize:'.75rem',overflow:'auto',whiteSpace:'pre-wrap',maxHeight:'70vh'}},
+          String(this.state.error)+'
+
+'+(this.state.error&&this.state.error.stack?this.state.error.stack:'')
+        ),
+        React.createElement('button',{onClick:()=>this.setState({error:null,info:null}),style:{marginTop:'1rem',padding:'.5rem 1rem',background:'#4f5ef0',color:'#fff',border:'none',borderRadius:'.4rem',cursor:'pointer',fontFamily:'sans-serif'}},'Tentar novamente')
+      );
+    }
+    return this.props.children;
+  }
+}
+
 import{supabase}from"./supabase";
 
 //  HELPERS 
@@ -408,7 +429,7 @@ function Analytics({onClose,sales,cashTx,products,clients,dark,receivables=[],or
   const markup=cost>0?(profit/cost)*100:0;
   const units=fS.reduce((a,s)=>a+s.quantity,0);
   const ticket=fS.length>0?batchRevenue(fS)/fS.length:0;
-  const stockVal=products.reduce((a,p)=>a+p.stock_qty*(p.cost_per_unit||0),0);
+  const stockVal=(products||[]).reduce((a,p)=>a+p.stock_qty*(p.cost_per_unit||0),0);
 
   // Sparkline 7 dias
   const spark=useMemo(()=>{
@@ -460,7 +481,7 @@ function Analytics({onClose,sales,cashTx,products,clients,dark,receivables=[],or
         <KCard label="Ticket médio" value={fmt(ticket)} color="#4f5ef0"/>
         <KCard label="Valor estoque" value={fmt(stockVal)} color="#8b44f0" icon="stock"/>
         <KCard label="Clientes" value={clients.length} color="#10b981" icon="client"/>
-        <KCard label="A Receber" value={fmt((receivables||[]).filter(r=>!r.paid).reduce((a,r)=>a+r.value,0))} sub={receivables.filter(r=>!r.paid).length+" pendente(s)"} color="#f59e0b" icon="dollar"/>
+        <KCard label="A Receber" value={fmt((receivables||[]).filter(r=>!r.paid).reduce((a,r)=>a+r.value,0))} sub={(receivables||[]).filter(r=>!r.paid).length+" pendente(s)"} color="#f59e0b" icon="dollar"/>
       </div>
 
       <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))",gap:".85rem",marginBottom:".85rem"}}>
@@ -525,22 +546,22 @@ function Analytics({onClose,sales,cashTx,products,clients,dark,receivables=[],or
             {l:"ROI (lucro/custo)",v:cost>0?fmtPct((profit/cost)*100):"—",c:profit>=0?"#10b981":"#f56565"},
             {l:"Margem líquida",v:fmtPct(margin),c:"#4f5ef0"},
             {l:"Markup empresa",v:fmtPct(markup),c:"#8b44f0"},
-            {l:"Pendências a receber",v:fmt(receivables.filter(r=>!r.paid).reduce((a,r)=>a+r.value,0)),c:"#f59e0b"},
-            {l:"Receita projetada",v:fmt(rev+receivables.filter(r=>!r.paid).reduce((a,r)=>a+r.value,0)),c:"#10b981"},
+            {l:"Pendências a receber",v:fmt((receivables||[]).filter(r=>!r.paid).reduce((a,r)=>a+r.value,0)),c:"#f59e0b"},
+            {l:"Receita projetada",v:fmt(rev+(receivables||[]).filter(r=>!r.paid).reduce((a,r)=>a+r.value,0)),c:"#10b981"},
           ]},
           {title:"Estoque & Giro",color:"#f59e0b",icon:"pkg",rows:[
             {l:"Valor total estoque",v:fmt(stockVal),c:"#f59e0b"},
-            {l:"Total unidades",v:fmtN(products.reduce((a,p)=>a+p.stock_qty,0))+" un",c:"var(--tx)"},
+            {l:"Total unidades",v:fmtN((products||[]).reduce((a,p)=>a+p.stock_qty,0))+" un",c:"var(--tx)"},
             {l:"Produtos cadastrados",v:products.length,c:"#4f5ef0"},
-            {l:"Estoque zerado",v:products.filter(p=>p.stock_qty<=0).length+" item(s)",c:"#f56565"},
-            {l:"Vencendo em 30d",v:products.filter(p=>p.expiry&&Math.ceil((new Date(p.expiry)-new Date())/86400000)<=30).length+" produto(s)",c:"#f59e0b"},
+            {l:"Estoque zerado",v:(products||[]).filter(p=>p.stock_qty<=0).length+" item(s)",c:"#f56565"},
+            {l:"Vencendo em 30d",v:(products||[]).filter(p=>p.expiry&&Math.ceil((new Date(p.expiry)-new Date())/86400000)<=30).length+" produto(s)",c:"#f59e0b"},
           ]},
           {title:"Performance Vendas",color:"#10b981",icon:"sales",rows:[
             {l:"Total de vendas",v:fS.length,c:"#10b981"},
             {l:"Unidades vendidas",v:fmtN(units)+" un",c:"var(--tx)"},
             {l:"Ticket médio",v:fmt(ticket),c:"#4f5ef0"},
             {l:"Clientes ativos",v:clients.length,c:"#8b44f0"},
-            {l:"Parcelas a receber",v:fmtN(receivables.filter(r=>!r.paid&&r.description&&r.description.includes("Parcela")).length),c:"#8b44f0"},
+            {l:"Parcelas a receber",v:fmtN((receivables||[]).filter(r=>!r.paid&&r.description&&r.description.includes("Parcela")).length),c:"#8b44f0"},
           ]},
           {title:"Pedidos & Compras",color:"#f59e0b",icon:"pkg",rows:[
             {l:"Pedidos pendentes",v:(orders||[]).filter(o=>o.status==="pendente"||o.status==="parcial").length+" pedido(s)",c:"#f59e0b"},
@@ -777,14 +798,14 @@ export default function App(){
   },[cu,load]);
 
   // Métricas
-  const cashIn=useMemo(()=>cashTx.filter(t=>t.type==="entrada").reduce((a,t)=>a+t.value,0),[cashTx]);
-  const cashOut=useMemo(()=>cashTx.filter(t=>t.type==="saida").reduce((a,t)=>a+t.value,0),[cashTx]);
+  const cashIn=useMemo(()=>(cashTx||[]).filter(t=>t.type==="entrada").reduce((a,t)=>a+t.value,0),[cashTx]);
+  const cashOut=useMemo(()=>(cashTx||[]).filter(t=>t.type==="saida").reduce((a,t)=>a+t.value,0),[cashTx]);
   const net=cashIn-cashOut;
   const margin=cashIn>0?(net/cashIn)*100:0;
   const mrkp=cashOut>0?(net/cashOut)*100:0;
-  const stockVal=useMemo(()=>products.reduce((a,p)=>a+p.stock_qty*(p.cost_per_unit||0),0),[products]);
-  const zeroStk=useMemo(()=>products.filter(p=>p.stock_qty<=0),[products]);
-  const lowStk=useMemo(()=>products.filter(p=>p.stock_qty>0&&p.stock_qty<=(p.min_stock||5)),[products]);
+  const stockVal=useMemo(()=>(products||[]).reduce((a,p)=>a+p.stock_qty*(p.cost_per_unit||0),0),[products]);
+  const zeroStk=useMemo(()=>(products||[]).filter(p=>p.stock_qty<=0),[products]);
+  const lowStk=useMemo(()=>(products||[]).filter(p=>p.stock_qty>0&&p.stock_qty<=(p.min_stock||5)),[products]);
   // Helper: calcula receita real descontando desconto UMA vez por batch
   const batchRevenue=(arr)=>{
     if(!arr||!arr.length)return 0;
@@ -797,7 +818,7 @@ export default function App(){
     return Object.values(b).reduce((a,v)=>a+Math.max(0,v.total-v.disc),0);
   };
   const totalSalesRev=useMemo(()=>batchRevenue(sales),[sales]);
-  const totalUnits=useMemo(()=>sales.reduce((a,s)=>a+s.quantity,0),[sales]);
+  const totalUnits=useMemo(()=>(sales||[]).reduce((a,s)=>a+s.quantity,0),[sales]);
 
   const isAdmin=cu?.role==="admin";
   const canEdit=cu?.role==="admin"||cu?.role==="operator";
@@ -1404,7 +1425,7 @@ export default function App(){
       // 2. Encontrar TODOS os itens do mesmo batch (ou só este se não tem batch)
       const batchKey=sale.batch_id||id;
       const batchSales=sale.batch_id
-        ? sales.filter(s=>s.batch_id===batchKey)
+        ? (sales||[]).filter(s=>s.batch_id===batchKey)
         : [sale];
 
       // 3. Reverter estoque de CADA item do batch
@@ -1488,7 +1509,7 @@ export default function App(){
   const addProduct=async()=>{
     if(!pf.name||!pf.cost_per_unit||!pf.price_per_unit){toast$("Preencha nome, custo e preço.","#f56565");return;}
     const{markup,margin,profit}=calcM(pf.cost_per_unit,pf.price_per_unit);
-    const sup=suppliers.find(s=>s.id===pf.supplier_id);
+    const sup=(suppliers||[]).find(s=>s.id===pf.supplier_id);
     try{
       const{error:e}=await supabase.from("products").insert([{id:uid(),code:pf.code||`PRD-${uid().slice(0,4).toUpperCase()}`,name:pf.name,description:pf.description||null,category:pf.category,unit:pf.unit||"un",cost_per_unit:parseFloat(pf.cost_per_unit),price_per_unit:parseFloat(pf.price_per_unit),units_per_pack:parseInt(pf.units_per_pack)||1,batch:pf.batch||null,expiry:pf.expiry||null,stock_qty:parseInt(pf.stock_qty)||0,min_stock:parseInt(pf.min_stock)||5,supplier_id:pf.supplier_id||null,supplier_name:sup?.name||null,markup,margin,profit,added_by:cu.display_name}]);
       if(e){toast$("Erro ao salvar: "+e.message,"#f56565");return;}
@@ -1499,7 +1520,7 @@ export default function App(){
     const{markup,margin,profit}=calcM(editing.cost_per_unit,editing.price_per_unit);
     // Detectar se vínculo pai mudou
 
-    const sup=suppliers.find(s=>s.id===editing.supplier_id);
+    const sup=(suppliers||[]).find(s=>s.id===editing.supplier_id);
     await supabase.from("products").update({code:editing.code,name:editing.name,description:editing.description,category:editing.category,unit:editing.unit,cost_per_unit:parseFloat(editing.cost_per_unit),price_per_unit:parseFloat(editing.price_per_unit),units_per_pack:parseInt(editing.units_per_pack)||1,batch:editing.batch,expiry:editing.expiry||null,stock_qty:parseInt(editing.stock_qty),min_stock:parseInt(editing.min_stock)||5,supplier_id:editing.supplier_id||null,supplier_name:sup?.name||null,markup,margin,profit,parent_product_id:editing.parent_product_id||null,qty_per_parent:parseFloat(editing.qty_per_parent)||1,total_mg:parseFloat(editing.total_mg)||null,dose_mg:parseFloat(editing.dose_mg)||null}).eq("id",editing.id);
     toast$("Produto atualizado!");setModal(null);setEditing(null);
   };
@@ -1527,7 +1548,7 @@ export default function App(){
   };
 
   const delClient=async id=>{
-    const clientSales=sales.filter(s=>s.client_id===id).length;
+    const clientSales=(sales||[]).filter(s=>s.client_id===id).length;
     const msg=clientSales>0
       ?"Excluir cliente? Ele possui "+clientSales+" venda(s) vinculada(s). O histórico será desvinculado."
       :"Excluir este cliente?";
@@ -1565,8 +1586,8 @@ export default function App(){
 
   // Filtros
   const cats=["all",...new Set(products.map(p=>p.category).filter(Boolean))];
-  const fProds=products.filter(p=>(fcat==="all"||p.category===fcat)&&(p.name?.toLowerCase().includes(search.toLowerCase())||p.code?.toLowerCase().includes(search.toLowerCase())));
-  const fSales=sales.filter(s=>s.product_name?.toLowerCase().includes(search.toLowerCase())||s.client_name?.toLowerCase().includes(search.toLowerCase()));
+  const fProds=(products||[]).filter(p=>(fcat==="all"||p.category===fcat)&&(p.name?.toLowerCase().includes(search.toLowerCase())||p.code?.toLowerCase().includes(search.toLowerCase())));
+  const fSales=(sales||[]).filter(s=>s.product_name?.toLowerCase().includes(search.toLowerCase())||s.client_name?.toLowerCase().includes(search.toLowerCase()));
   const fCash=cashTx.filter(x=>x.description?.toLowerCase().includes(search.toLowerCase())||(x.category||"").toLowerCase().includes(search.toLowerCase()));
 
   const nav=[
@@ -1592,13 +1613,16 @@ export default function App(){
   };
 
   //  RENDER LOGIN 
-  if(!cu)return(<>
-    <style>{`@import url('https://fonts.googleapis.com/css2?family=Syne:wght@700;800&family=DM+Sans:wght@400;500;600&display=swap');@keyframes loginShake{0%,100%{transform:translateX(0)}20%{transform:translateX(-8px)}40%{transform:translateX(8px)}60%{transform:translateX(-6px)}80%{transform:translateX(6px)}}`}</style>
+  if(!cu)return(
+    <ErrorBoundary>
+      <>
+        <style>{`@import url('https://fonts.googleapis.com/css2?family=Syne:wght@700;800&family=DM+Sans:wght@400;500;600&display=swap');@keyframes loginShake{0%,100%{transform:translateX(0)}20%{transform:translateX(-8px)}40%{transform:translateX(8px)}60%{transform:translateX(-6px)}80%{transform:translateX(6px)}}`}</style>
     <LoginScreen onLogin={login} dark={dark}/>
-  </>);
+      </>
+    </ErrorBoundary>);
 
   //  RENDER APP 
-  return(<>
+  return(<ErrorBoundary><>
     <style>{`@import url('https://fonts.googleapis.com/css2?family=Syne:wght@700;800&family=DM+Sans:wght@400;500;600&display=swap');@keyframes fadeUp{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}input[type=date]::-webkit-calendar-picker-indicator{filter:${dark?"invert(.5)":"none"}}`}</style>
 
     {/* TOAST */}
@@ -1733,7 +1757,7 @@ export default function App(){
             const monthStart=new Date(now.getFullYear(),now.getMonth(),1);
             const monthRev=(cashTx||[]).filter(t=>t.type==="entrada"&&new Date(t.created_at)>=monthStart).reduce((a,t)=>a+t.value,0);
             const goal=parseFloat(monthGoal)||0;
-            const pend=receivables.filter(r=>!r.paid);
+            const pend=(receivables||[]).filter(r=>!r.paid);
             const pendVal=pend.reduce((a,r)=>a+r.value,0);
             const overdue=pend.filter(r=>r.due_date&&new Date(r.due_date)<new Date());
             return(<>
@@ -1894,7 +1918,7 @@ export default function App(){
           </div>
           <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(120px,1fr))",gap:".6rem",marginBottom:".7rem"}}>
             <KCard label="Itens" value={products.length} color="#4f5ef0"/>
-            <KCard label="Unidades" value={fmtN(products.reduce((a,p)=>a+p.stock_qty,0))} color="#8b44f0"/>
+            <KCard label="Unidades" value={fmtN((products||[]).reduce((a,p)=>a+p.stock_qty,0))} color="#8b44f0"/>
             <KCard label="Valor estoque" value={fmt(stockVal)} color="#f59e0b"/>
             {zeroStk.length>0&&<KCard label="Zerados" value={zeroStk.length} color="#f56565"/>}
           </div>
@@ -2023,15 +2047,15 @@ export default function App(){
           <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:".75rem",flexWrap:"wrap",gap:".5rem"}}>
             <h2 style={{fontFamily:"'Syne',sans-serif",fontWeight:800,fontSize:"1rem",color:"var(--tx)"}}>Clientes</h2>
             <div style={{display:"flex",gap:".4rem",alignItems:"center"}}>
-              <XBtn rows={clients.map(c=>({Nome:c.name,Telefone:c.phone||"",Email:c.email||"",Obs:c.notes||"",Compras:sales.filter(s=>s.client_id===c.id||s.client_name===c.name).length,Total:fmt(batchRevenue(sales.filter(s=>s.client_id===c.id||s.client_name===c.name)))}))} name="clientes-caixapro" sheet="Clientes"/>
-              <PBtn cols={[{k:"Nome",l:"Nome"},{k:"Telefone",l:"Telefone"},{k:"Email",l:"Email"},{k:"Compras",l:"Compras"},{k:"Total",l:"Total"}]} rows={clients.map(c=>({Nome:c.name,Telefone:c.phone||"",Email:c.email||"",Compras:sales.filter(s=>s.client_id===c.id||s.client_name===c.name).length,Total:fmt(batchRevenue(sales.filter(s=>s.client_id===c.id||s.client_name===c.name)))}))} name="clientes-caixapro" title="Relatório de Clientes"/>
+              <XBtn rows={(clients||[]).map(c=>({Nome:c.name,Telefone:c.phone||"",Email:c.email||"",Obs:c.notes||"",Compras:(sales||[]).filter(s=>s.client_id===c.id||s.client_name===c.name).length,Total:fmt(batchRevenue((sales||[]).filter(s=>s.client_id===c.id||s.client_name===c.name)))}))} name="clientes-caixapro" sheet="Clientes"/>
+              <PBtn cols={[{k:"Nome",l:"Nome"},{k:"Telefone",l:"Telefone"},{k:"Email",l:"Email"},{k:"Compras",l:"Compras"},{k:"Total",l:"Total"}]} rows={(clients||[]).map(c=>({Nome:c.name,Telefone:c.phone||"",Email:c.email||"",Compras:(sales||[]).filter(s=>s.client_id===c.id||s.client_name===c.name).length,Total:fmt(batchRevenue((sales||[]).filter(s=>s.client_id===c.id||s.client_name===c.name)))}))} name="clientes-caixapro" title="Relatório de Clientes"/>
               {canEdit&&<Btn sm onClick={()=>setModal("cliente")}><Ic n="plus" s={12}/>Novo</Btn>}
             </div>
           </div>
           {clients.length===0?<p style={{color:"var(--tx5)",textAlign:"center",padding:"3rem 0",fontSize:".8rem"}}>Nenhum cliente cadastrado.</p>
           :<div style={{display:"grid",gap:".55rem"}}>
-            {clients.map(c=>{
-              const cs=sales.filter(s=>s.client_id===c.id||s.client_name===c.name);
+            {(clients||[]).map(c=>{
+              const cs=(sales||[]).filter(s=>s.client_id===c.id||s.client_name===c.name);
               return(
                 <div key={c.id} style={{background:"var(--card)",border:"1px solid var(--bdr)",borderRadius:".75rem",padding:".78rem 1rem",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
                   <div style={{display:"flex",alignItems:"center",gap:".7rem"}}>
@@ -2213,7 +2237,7 @@ export default function App(){
             <div style={{background:"var(--card)",border:"1px solid var(--bdr)",borderRadius:".75rem",padding:".75rem 1rem"}}>
               <div style={{fontFamily:"'Syne',sans-serif",fontWeight:700,fontSize:".78rem",color:"var(--tx2)",marginBottom:".5rem"}}>📊 Últimas entregas registradas</div>
               {(()=>{
-                const entregas=cashTx.filter(t=>t.category==="Frete"||t.description?.toLowerCase().includes("frete")||t.description?.toLowerCase().includes("entregador")).slice(0,5);
+                const entregas=(cashTx||[]).filter(t=>t.category==="Frete"||t.description?.toLowerCase().includes("frete")||t.description?.toLowerCase().includes("entregador")).slice(0,5);
                 if(entregas.length===0)return <p style={{color:"var(--tx5)",fontSize:".75rem",textAlign:"center",padding:"1rem"}}>Nenhuma entrega no caixa ainda.</p>;
                 return entregas.map((t,i)=>(
                   <div key={i} style={{display:"flex",justifyContent:"space-between",padding:".4rem 0",borderBottom:"1px solid var(--sep)",fontSize:".75rem"}}>
@@ -2232,13 +2256,13 @@ export default function App(){
             <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:".75rem",flexWrap:"wrap",gap:".5rem"}}>
               <h2 style={{fontFamily:"'Syne',sans-serif",fontWeight:800,fontSize:"1rem",color:"var(--tx)"}}>📦 Pedidos de Compra</h2>
               <div style={{display:"flex",gap:".4rem",flexWrap:"wrap"}}>
-                <XBtn rows={orders.map(o=>({Data:o.order_date,Fornecedor:o.supplier_name,Status:o.status,Total:fmt(o.total_value),"Sinal (%)":o.initial_pct+"%","Sinal R$":fmt(o.initial_value),Restante:fmt(o.remaining_value),Recebimento:o.received_date||"—"}))} name="pedidos-caixapro" sheet="Pedidos"/>
+                <XBtn rows={(orders||[]).map(o=>({Data:o.order_date,Fornecedor:o.supplier_name,Status:o.status,Total:fmt(o.total_value),"Sinal (%)":o.initial_pct+"%","Sinal R$":fmt(o.initial_value),Restante:fmt(o.remaining_value),Recebimento:o.received_date||"—"}))} name="pedidos-caixapro" sheet="Pedidos"/>
                 <Btn sm onClick={()=>setShowOrderModal(true)}><Ic n="plus" s={12}/>Pedido de Compra</Btn>
               </div>
             </div>
             {/* KPIs pedidos */}
             <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(120px,1fr))",gap:".6rem",marginBottom:".75rem"}}>
-              <KCard label="Pendentes" value={fmtN(orders.filter(o=>o.status==="pendente"||o.status==="parcial").length)} sub={fmt((orders||[]).filter(o=>o.status==="pendente"||o.status==="parcial").reduce((a,o)=>a+o.remaining_value,0))+" restante"} color="#f59e0b"/>
+              <KCard label="Pendentes" value={fmtN((orders||[]).filter(o=>o.status==="pendente"||o.status==="parcial").length)} sub={fmt((orders||[]).filter(o=>o.status==="pendente"||o.status==="parcial").reduce((a,o)=>a+o.remaining_value,0))+" restante"} color="#f59e0b"/>
               <KCard label="Recebidos" value={fmtN((orders||[]).filter(o=>o.status==="recebido").length)} color="#10b981"/>
               <KCard label="Total pago" value={fmt((orders||[]).reduce((a,o)=>a+(o.initial_value||0)+(o.remaining_paid||0),0))} color="#4f5ef0"/>
               <KCard label="A pagar" value={fmt((orders||[]).filter(o=>o.status==="pendente").reduce((a,o)=>a+(o.remaining_value||0),0))} color="#f56565"/>
@@ -2250,7 +2274,7 @@ export default function App(){
                 <div style={{color:"var(--tx5)",fontSize:".85rem",marginBottom:".75rem"}}>Nenhum pedido registrado.</div>
                 <Btn onClick={()=>setShowOrderModal(true)}><Ic n="plus" s={13}/>Criar primeiro pedido</Btn>
                </div>
-              :orders.map(order=>{
+              :(orders||[]).map(order=>{
                 const items=JSON.parse(order.items||"[]");
                 const statusColor=order.status==="recebido"?"#10b981":order.status==="perdido"?"#f56565":order.status==="parcial"?"#0891b2":order.status==="cancelado"?"#666a88":"#f59e0b";
                 const statusLabel=order.status==="recebido"?"✅ Recebido":order.status==="cancelado"?"❌ Cancelado":order.status==="perdido"?"💀 Perdido":"🟡 Pendente";
@@ -2346,9 +2370,9 @@ export default function App(){
               <XBtn rows={receivables.map(r=>({Cliente:r.client_name||"—",Descrição:r.description,Valor:fmt(r.value),Vencimento:r.due_date||"—",Status:r.paid?"Recebido":"Pendente"}))} name="recebiveis-caixapro" sheet="A Receber"/>
             </div>
             <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:".6rem",marginBottom:".75rem"}}>
-              <KCard label="Em aberto" value={fmtN(receivables.filter(r=>!r.paid).length)} sub={fmt(receivables.filter(r=>!r.paid).reduce((a,r)=>a+r.value,0))} color="#4f5ef0"/>
-              <KCard label="Vencidas" value={fmtN(receivables.filter(r=>!r.paid&&r.due_date&&new Date(r.due_date)<new Date()).length)} sub={fmt(receivables.filter(r=>!r.paid&&r.due_date&&new Date(r.due_date)<new Date()).reduce((a,r)=>a+r.value,0))} color="#f56565"/>
-              <KCard label="Recebido total" value={fmt(receivables.filter(r=>r.paid).reduce((a,r)=>a+r.value,0))} color="#10b981"/>
+              <KCard label="Em aberto" value={fmtN((receivables||[]).filter(r=>!r.paid).length)} sub={fmt((receivables||[]).filter(r=>!r.paid).reduce((a,r)=>a+r.value,0))} color="#4f5ef0"/>
+              <KCard label="Vencidas" value={fmtN((receivables||[]).filter(r=>!r.paid&&r.due_date&&new Date(r.due_date)<new Date()).length)} sub={fmt((receivables||[]).filter(r=>!r.paid&&r.due_date&&new Date(r.due_date)<new Date()).reduce((a,r)=>a+r.value,0))} color="#f56565"/>
+              <KCard label="Recebido total" value={fmt((receivables||[]).filter(r=>r.paid).reduce((a,r)=>a+r.value,0))} color="#10b981"/>
             </div>
             <div style={{background:"var(--card)",border:"1px solid var(--bdr)",borderRadius:".75rem",padding:"1rem",marginBottom:".75rem"}}>
               <div style={{fontFamily:"'Syne',sans-serif",fontWeight:700,fontSize:".8rem",color:"var(--tx2)",marginBottom:".65rem"}}>➕ Nova conta a receber</div>
@@ -2357,7 +2381,7 @@ export default function App(){
                   <div style={{fontSize:".68rem",color:"var(--sub)",textTransform:"uppercase",marginBottom:".3rem"}}>Cliente</div>
                   <select value={recForm.client_id} onChange={e=>{const c=clients.find(x=>x.id===e.target.value);setRecForm(f=>({...f,client_id:e.target.value,client_name:c?c.name:""}));}} style={IS}>
                     <option value="">Selecione...</option>
-                    {clients.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}
+                    {(clients||[]).map(c=><option key={c.id} value={c.id}>{c.name}</option>)}
                   </select>
                 </div>
                 <div>
@@ -2468,7 +2492,7 @@ export default function App(){
                 <div style={{background:"var(--card)",border:"1px solid var(--bdr)",borderRadius:".75rem",overflow:"hidden"}}>
                   {suppliers.length===0
                     ?<p style={{textAlign:"center",color:"var(--tx5)",padding:"2rem",fontSize:".8rem"}}>Nenhum fornecedor cadastrado.</p>
-                    :suppliers.map(s=>(
+                    :(suppliers||[]).map(s=>(
                     <div key={s.id} style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:".72rem 1rem",borderBottom:"1px solid var(--sep)"}}>
                       <div>
                         <div style={{fontWeight:700,fontSize:".83rem",color:"var(--tx)"}}>{s.name}</div>
@@ -2651,7 +2675,7 @@ export default function App(){
                 const key=gYear+"-"+(mi+1).toString().padStart(2,"0");
                 const goal=monthlyGoals[key]||0;
                 const mStart=new Date(gYear,mi,1);const mEnd=new Date(gYear,mi+1,0,23,59,59);
-                const real=batchRevenue(sales.filter(s=>{const d=new Date(s.created_at);return d>=mStart&&d<=mEnd;}));
+                const real=batchRevenue((sales||[]).filter(s=>{const d=new Date(s.created_at);return d>=mStart&&d<=mEnd;}));
                 const pct=goal>0?Math.min((real/goal)*100,100):0;
                 const isCurrent=new Date().getFullYear()===gYear&&new Date().getMonth()===mi;
                 const isPast=new Date(gYear,mi+1,1)<new Date();
@@ -2746,9 +2770,9 @@ export default function App(){
               <XBtn rows={receivables.map(r=>({Cliente:r.client_name||"—",Descrição:r.description,Valor:fmt(r.value),Vencimento:r.due_date||"—",Status:r.paid?"Recebido":"Pendente"}))} name="recebiveis-caixapro" sheet="A Receber"/>
             </div>
             <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:".6rem",marginBottom:".75rem"}}>
-              <KCard label="Em aberto" value={fmtN(receivables.filter(r=>!r.paid).length)} sub={fmt(receivables.filter(r=>!r.paid).reduce((a,r)=>a+r.value,0))} color="#4f5ef0"/>
-              <KCard label="Vencidas" value={fmtN(receivables.filter(r=>!r.paid&&r.due_date&&new Date(r.due_date)<new Date()).length)} sub={fmt(receivables.filter(r=>!r.paid&&r.due_date&&new Date(r.due_date)<new Date()).reduce((a,r)=>a+r.value,0))} color="#f56565"/>
-              <KCard label="Recebido total" value={fmt(receivables.filter(r=>r.paid).reduce((a,r)=>a+r.value,0))} color="#10b981"/>
+              <KCard label="Em aberto" value={fmtN((receivables||[]).filter(r=>!r.paid).length)} sub={fmt((receivables||[]).filter(r=>!r.paid).reduce((a,r)=>a+r.value,0))} color="#4f5ef0"/>
+              <KCard label="Vencidas" value={fmtN((receivables||[]).filter(r=>!r.paid&&r.due_date&&new Date(r.due_date)<new Date()).length)} sub={fmt((receivables||[]).filter(r=>!r.paid&&r.due_date&&new Date(r.due_date)<new Date()).reduce((a,r)=>a+r.value,0))} color="#f56565"/>
+              <KCard label="Recebido total" value={fmt((receivables||[]).filter(r=>r.paid).reduce((a,r)=>a+r.value,0))} color="#10b981"/>
             </div>
             <div style={{background:"var(--card)",border:"1px solid var(--bdr)",borderRadius:".75rem",padding:"1rem",marginBottom:".75rem"}}>
               <div style={{fontFamily:"'Syne',sans-serif",fontWeight:700,fontSize:".8rem",color:"var(--tx2)",marginBottom:".65rem"}}>➕ Nova conta a receber</div>
@@ -2757,7 +2781,7 @@ export default function App(){
                   <div style={{fontSize:".68rem",color:"var(--sub)",textTransform:"uppercase",marginBottom:".3rem"}}>Cliente</div>
                   <select value={recForm.client_id} onChange={e=>{const c=clients.find(x=>x.id===e.target.value);setRecForm(f=>({...f,client_id:e.target.value,client_name:c?c.name:""}));}} style={IS}>
                     <option value="">Selecione...</option>
-                    {clients.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}
+                    {(clients||[]).map(c=><option key={c.id} value={c.id}>{c.name}</option>)}
                   </select>
                 </div>
                 <div>
@@ -3033,7 +3057,7 @@ export default function App(){
               style={IS}
             >
               <option value="">Sem cliente</option>
-              {clients.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}
+              {(clients||[]).map(c=><option key={c.id} value={c.id}>{c.name}</option>)}
             </select>
           </Field>
           <div>
@@ -3168,7 +3192,7 @@ export default function App(){
         <R2>
           <Sel label="Fornecedor" hint="opcional" value={editing.supplier_id||""} onChange={e=>setEditing(v=>({...v,supplier_id:e.target.value}))}>
             <option value="">Nenhum</option>
-            {suppliers.map(s=><option key={s.id} value={s.id}>{s.name}</option>)}
+            {(suppliers||[]).map(s=><option key={s.id} value={s.id}>{s.name}</option>)}
           </Sel>
           <Inp label="Unidade" value={editing.unit||"un"} onChange={e=>setEditing(v=>({...v,unit:e.target.value}))}/>
         </R2>
@@ -3261,7 +3285,7 @@ modal==="editSale"&&editing&&(
       <Modal title="Novo Produto" onClose={()=>setModal(null)} icon="product" wide>
         <R2><Inp label="Código" hint="auto" placeholder="PRD-001" value={pf.code} onChange={e=>setPf(f=>({...f,code:e.target.value}))}/><Sel label="Categoria" value={pf.category} onChange={e=>setPf(f=>({...f,category:e.target.value}))}>{activeCats.map(c=><option key={c.key} value={c.key}>{c.icon} {c.label}</option>)}</Sel></R2>
                 <Inp label="Nome *" value={editing.name} onChange={e=>setEditing(v=>({...v,name:e.target.value}))}/>
-        <R2><Sel label="Fornecedor" value={editing.supplier_id||""} onChange={e=>setEditing(v=>({...v,supplier_id:e.target.value}))}><option value="">Nenhum</option>{suppliers.map(s=><option key={s.id} value={s.id}>{s.name}</option>)}</Sel><Inp label="Unidade" value={editing.unit||"un"} onChange={e=>setEditing(v=>({...v,unit:e.target.value}))}/></R2>
+        <R2><Sel label="Fornecedor" value={editing.supplier_id||""} onChange={e=>setEditing(v=>({...v,supplier_id:e.target.value}))}><option value="">Nenhum</option>{(suppliers||[]).map(s=><option key={s.id} value={s.id}>{s.name}</option>)}</Sel><Inp label="Unidade" value={editing.unit||"un"} onChange={e=>setEditing(v=>({...v,unit:e.target.value}))}/></R2>
         <R2><Inp label="Lote" value={editing.batch||""} onChange={e=>setEditing(v=>({...v,batch:e.target.value}))}/><Inp label="Vencimento" type="date" value={editing.expiry||""} onChange={e=>setEditing(v=>({...v,expiry:e.target.value}))}/></R2>
         <R2><Inp label="Custo/un (R$)" type="number" min="0" step="0.01" value={editing.cost_per_unit} onChange={e=>setEditing(v=>({...v,cost_per_unit:e.target.value}))}/><Inp label="Preço venda/un (R$)" type="number" min="0" step="0.01" value={editing.price_per_unit} onChange={e=>setEditing(v=>({...v,price_per_unit:e.target.value}))}/></R2>
         <MPreview cost={editing.cost_per_unit} price={editing.price_per_unit}/>
@@ -3288,7 +3312,7 @@ modal==="editSale"&&editing&&(
         <div style={{display:"flex",justifyContent:"flex-end",marginBottom:".85rem"}}><Btn sm onClick={()=>setModal("addSupp")}><Ic n="plus" s={12}/>Novo</Btn></div>
         {suppliers.length===0?<p style={{color:"var(--tx5)",textAlign:"center",padding:"2rem 0",fontSize:".8rem"}}>Nenhum fornecedor cadastrado.</p>
         :<div style={{display:"grid",gap:".55rem"}}>
-          {suppliers.map(s=>(
+          {(suppliers||[]).map(s=>(
             <div key={s.id} style={{background:"var(--inp)",border:"1px solid var(--bdr2)",borderRadius:".6rem",padding:".72rem 1rem",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
               <div><div style={{fontWeight:700,fontSize:".85rem",color:"var(--tx)"}}>🏭 {s.name}</div><div style={{fontSize:".7rem",color:"var(--tx5)",marginTop:".12rem"}}>{[s.contact,s.phone,s.email].filter(Boolean).join(" · ")||"Sem contato"}</div>{s.notes&&<div style={{fontSize:".68rem",color:"#8b44f0"}}>📝 {s.notes}</div>}</div>
               {isAdmin&&<div style={{display:"flex",gap:".3rem"}}>
@@ -3434,7 +3458,7 @@ modal==="editSale"&&editing&&(
     {showClientHist&&(
       <Modal title={"Histórico · "+(showClientHist.name||"")} onClose={()=>setShowClientHist(null)} icon="analytics" wide>
         {(()=>{
-          const cs=sales.filter(s=>s.client_id===showClientHist.id||s.client_name===showClientHist.name);
+          const cs=(sales||[]).filter(s=>s.client_id===showClientHist.id||s.client_name===showClientHist.name);
           const total=batchRevenue(cs);
           const prodMap={};
           cs.forEach(s=>{prodMap[s.product_name]=(prodMap[s.product_name]||0)+s.quantity;});
@@ -3584,7 +3608,7 @@ modal==="editSale"&&editing&&(
         const goal=monthlyGoals[key]||0;
         const monthStart=new Date(goalYear,mi,1);
         const monthEnd=new Date(goalYear,mi+1,0,23,59,59);
-        const mSales=sales.filter(s=>{const sd=new Date(s.created_at);return sd>=monthStart&&sd<=monthEnd;});const real=batchRevenue(mSales); // discount applied in batchRevenue
+        const mSales=(sales||[]).filter(s=>{const sd=new Date(s.created_at);return sd>=monthStart&&sd<=monthEnd;});const real=batchRevenue(mSales); // discount applied in batchRevenue
         const pct=goal>0?Math.min((real/goal)*100,100):0;
         const isCurrent=now.getFullYear()===goalYear&&now.getMonth()===mi;
         return{key,mName,mi,goal,real,pct,isCurrent};
@@ -3647,9 +3671,9 @@ modal==="editSale"&&editing&&(
 
         {/* Fornecedor */}
         <Field label="Fornecedor *">
-          <select value={orderSupplier.id} onChange={e=>{const s=suppliers.find(x=>x.id===e.target.value);setOrderSupplier({id:e.target.value,name:s?s.name:"Outro"});}} style={IS}>
+          <select value={orderSupplier.id} onChange={e=>{const s=(suppliers||[]).find(x=>x.id===e.target.value);setOrderSupplier({id:e.target.value,name:s?s.name:"Outro"});}} style={IS}>
             <option value="">Selecione o fornecedor...</option>
-            {suppliers.map(s=><option key={s.id} value={s.id}>{s.name}</option>)}
+            {(suppliers||[]).map(s=><option key={s.id} value={s.id}>{s.name}</option>)}
           </select>
         </Field>
 
@@ -4041,11 +4065,11 @@ modal==="editSale"&&editing&&(
           <div>
             <div style={{fontSize:".65rem",color:"var(--sub)",marginBottom:".28rem"}}>Fornecedor</div>
             <select value={editingOrder.supplier_id||""} onChange={e=>{
-              const s=suppliers.find(x=>x.id===e.target.value);
+              const s=(suppliers||[]).find(x=>x.id===e.target.value);
               setEditingOrder(v=>({...v,supplier_id:e.target.value,supplier_name:s?.name||v.supplier_name}));
             }} style={IS}>
               <option value="">Selecione...</option>
-              {suppliers.map(s=><option key={s.id} value={s.id}>{s.name}</option>)}
+              {(suppliers||[]).map(s=><option key={s.id} value={s.id}>{s.name}</option>)}
             </select>
           </div>
           <R2>
@@ -4107,5 +4131,5 @@ modal==="editSale"&&editing&&(
         </div>
       </div>
     )}
-  </>);
+  </></ErrorBoundary>;
 }
