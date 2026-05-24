@@ -1522,7 +1522,7 @@ export default function App(){
   const delSupp=async id=>{
     if(!window.confirm("Excluir fornecedor? Os pedidos vinculados não serão afetados."))return;
     await supabase.from("suppliers").delete().eq("id",id);
-    setSuppliers(prev=>prev.filter(s=>s.id!==id));
+    setSupp(prev=>prev.filter(s=>s.id!==id));
     toast$("Fornecedor removido.","#f59e0b");
   };
 
@@ -1673,7 +1673,7 @@ export default function App(){
           {(()=>{
             const thirtyDaysAgo=new Date();thirtyDaysAgo.setDate(thirtyDaysAgo.getDate()-30);
             const churnRisk=(clients||[]).filter(c=>{
-              const lastSale=sales.filter(s=>s.client_id===c.id||s.client_name===c.name)
+              const lastSale=(sales||[]).filter(s=>s.client_id===c.id||s.client_name===c.name)
                 .sort((a,b)=>new Date(b.created_at)-new Date(a.created_at))[0];
               if(!lastSale)return false;
               return new Date(lastSale.created_at)<thirtyDaysAgo;
@@ -1697,8 +1697,8 @@ export default function App(){
 
           {/* Pedidos pendentes */}
           {(()=>{
-            const pedPend=orders.filter(o=>o.status==="pendente"||o.status==="parcial");
-            const perdidos=orders.filter(o=>o.status==="perdido");
+            const pedPend=(orders||[]).filter(o=>o.status==="pendente"||o.status==="parcial");
+            const perdidos=(orders||[]).filter(o=>o.status==="perdido");
             if(pedPend.length===0&&perdidos.length===0)return null;
             const allItems=pedPend.flatMap(o=>JSON.parse(o.items||"[]"));
             const prodMap={};
@@ -1939,7 +1939,7 @@ export default function App(){
                       <div style={{fontSize:".65rem",color:"var(--tx5)"}}>
                       {p.code}{p.batch&&` · Lote: ${p.batch}`}
                       {(()=>{
-                        const sold30=(sales||[]).filter(s=>{try{const d=new Date(s.created_at);return(s.product_id===p.id||s.product_name===p.name)&&d>new Date(Date.now()-30*864e5);}catch{return false;}}).reduce((a,s)=>a+(s.quantity||0),0);
+                        const sold30=(sales||[]).filter(s=>{try{const d=new Date(s.created_at||Date.now());return(s.product_id===p.id||s.product_name===p.name)&&d>new Date(Date.now()-30*864e5);}catch{return false;}}).reduce((a,s)=>a+(s.quantity||0),0);
                         if(sold30<=0||p.stock_qty<=0)return null;
                         const daysLeft=Math.floor((p.stock_qty/sold30)*30);
                         const col=daysLeft<7?"#f56565":daysLeft<15?"#f59e0b":"#10b981";
@@ -3633,6 +3633,7 @@ modal==="editSale"&&editing&&(
                 </div>
               </div>
             ))}
+          </div>
           </div>
           <div style={{textAlign:"center",fontSize:".7rem",color:"var(--tx5)",display:"flex",alignItems:"center",justifyContent:"center",gap:".4rem"}}><span>Visualização das metas · Para editar acesse</span><button onClick={()=>{setShowGoals(false);setTab("config");setConfigSection("metas");}} style={{background:"none",border:"none",color:"#4f5ef0",fontSize:".72rem",fontFamily:"'DM Sans',sans-serif",fontWeight:700,cursor:"pointer",padding:0}}>⚙️ Config → 🎯 Metas</button></div>
         </Modal>
