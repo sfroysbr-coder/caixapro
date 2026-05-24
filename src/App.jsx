@@ -379,6 +379,13 @@ function LoginScreen({onLogin,dark}){
 
 //  ANALYTICS 
 function Analytics({onClose,sales,cashTx,products,clients,dark,receivables=[],orders=[]}){
+  // Local batchRevenue (same logic as App scope, needed here as Analytics is a separate component)
+  const batchRevenue=(arr)=>{
+    if(!arr||!arr.length)return 0;
+    const b={};
+    arr.forEach(s=>{const k=s.batch_id||s.id||"x";if(!b[k])b[k]={total:0,disc:parseFloat(s.discount)||0};b[k].total+=parseFloat(s.total_price)||0;});
+    return Object.values(b).reduce((a,v)=>a+Math.max(0,v.total-v.disc),0);
+  };
   const[range,setRange]=useState("30d");
   const[cf,setCf]=useState(""),ct=useState("");
   const[ct_,setCt]=ct;
@@ -536,11 +543,11 @@ function Analytics({onClose,sales,cashTx,products,clients,dark,receivables=[],or
             {l:"Parcelas a receber",v:fmtN(receivables.filter(r=>!r.paid&&r.description&&r.description.includes("Parcela")).length),c:"#8b44f0"},
           ]},
           {title:"Pedidos & Compras",color:"#f59e0b",icon:"pkg",rows:[
-            {l:"Pedidos pendentes",v:orders.filter(o=>o.status==="pendente"||o.status==="parcial").length+" pedido(s)",c:"#f59e0b"},
+            {l:"Pedidos pendentes",v:(orders||[]).filter(o=>o.status==="pendente"||o.status==="parcial").length+" pedido(s)",c:"#f59e0b"},
             {l:"A pagar (restante)",v:fmt(orders.filter(o=>o.status==="pendente").reduce((a,o)=>a+o.remaining_value,0)),c:"#f56565"},
-            {l:"Pedidos recebidos",v:orders.filter(o=>o.status==="recebido").length+" pedido(s)",c:"#10b981"},
-            {l:"Total investido",v:fmt(orders.reduce((a,o)=>a+o.initial_value+(o.remaining_paid||0),0)),c:"#4f5ef0"},
-            {l:"💀 Perdas (sinais perdidos)",v:fmt(orders.filter(o=>o.status==="perdido").reduce((a,o)=>a+o.initial_value,0)),c:"#f56565"},
+            {l:"Pedidos recebidos",v:(orders||[]).filter(o=>o.status==="recebido").length+" pedido(s)",c:"#10b981"},
+            {l:"Total investido",v:fmt((orders||[]).reduce((a,o)=>a+(o.initial_value||0)+(o.remaining_paid||0),0)),c:"#4f5ef0"},
+            {l:"💀 Perdas (sinais perdidos)",v:fmt((orders||[]).filter(o=>o.status==="perdido").reduce((a,o)=>a+o.initial_value,0)),c:"#f56565"},
           ]},
         ].map(block=>(
           <div key={block.title} style={{background:"var(--acard)",border:"1px solid var(--abdr)",borderRadius:".75rem",padding:"1rem"}}>
@@ -1635,6 +1642,32 @@ export default function App(){
               {lowStk.length>0&&<p style={{fontSize:".73rem",color:"#f59e0b"}}>🟡 Baixo: {lowStk.map(p=>`${p.name}(${p.stock_qty})`).join(", ")}</p>}
             </div>
           )}
+          {/* ⚠️ Clientes em risco de churn */}
+          {(()=>{
+            const thirtyDaysAgo=new Date();thirtyDaysAgo.setDate(thirtyDaysAgo.getDate()-30);
+            const churnRisk=(clients||[]).filter(c=>{
+              const lastSale=sales.filter(s=>s.client_id===c.id||s.client_name===c.name)
+                .sort((a,b)=>new Date(b.created_at)-new Date(a.created_at))[0];
+              if(!lastSale)return false;
+              return new Date(lastSale.created_at)<thirtyDaysAgo;
+            });
+            if(churnRisk.length===0)return null;
+            return(
+              <div style={{background:"linear-gradient(135deg,#f5656508,#f59e0b08)",border:"1px solid #f59e0b30",borderRadius:".75rem",padding:".75rem 1rem",marginBottom:".65rem"}}>
+                <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:".35rem"}}>
+                  <div style={{fontWeight:700,fontSize:".78rem",color:"#f59e0b",display:"flex",alignItems:"center",gap:".35rem"}}>⚠️ Clientes sem compra +30 dias</div>
+                  <button onClick={()=>setTab("clientes")} style={{fontSize:".65rem",color:"#f59e0b",background:"none",border:"none",cursor:"pointer",fontFamily:"'DM Sans',sans-serif",fontWeight:600}}>ver clientes →</button>
+                </div>
+                <div style={{display:"flex",gap:".35rem",flexWrap:"wrap"}}>
+                  {churnRisk.slice(0,4).map(c=>(
+                    <span key={c.id} style={{fontSize:".7rem",color:"#f59e0b",background:"#f59e0b15",borderRadius:"99px",padding:".15rem .55rem",border:"1px solid #f59e0b30"}}>{c.name?.split(" ")[0]}</span>
+                  ))}
+                  {churnRisk.length>4&&<span style={{fontSize:".7rem",color:"var(--sub)"}}>+{churnRisk.length-4} mais</span>}
+                </div>
+              </div>
+            );
+          })()}
+
           {/* Pedidos pendentes */}
           {(()=>{
             const pedPend=orders.filter(o=>o.status==="pendente"||o.status==="parcial");
@@ -1804,6 +1837,14 @@ export default function App(){
                   </div>
                   {canEdit&&<div style={{display:"flex",gap:".2rem"}}>
                     <button onClick={()=>{const batch=s.batch_id?sales.filter(x=>x.batch_id===s.batch_id):[s];setShowReceipt(batch);}} style={{background:"none",border:"none",color:"#8b44f0",padding:".2rem"}} title="Comprovante"><Ic n="pdf" s={13}/></button>
+                    {canEdit&&<button onClick={()=>{
+                      const batch=s.batch_id?sales.filter(x=>x.batch_id===s.batch_id&&x.product_id):[s];
+                      cartReset();
+                      const itens=batch.map(b=>({key:uid(),product_id:b.product_id||"",product_name:b.product_name,unit_price:String(b.unit_price||0),qty:b.quantity||1,unit:b.unit||"un"}));
+                      setCartItems(itens.length>0?itens:[newCartItem()]);
+                      if(s.client_name)setCartClient({id:s.client_id||"",name:s.client_name});
+                      setModal("sale");toast$("🔄 Carrinho preenchido com a venda anterior!");
+                    }} style={{background:"none",border:"none",color:"#4f5ef0",padding:".2rem"}} title="Repetir venda"><Ic n="refresh" s={13}/></button>}
                     {s.client_name&&<button onClick={()=>{const m="Olá "+s.client_name+"! ✅ Venda de *"+s.product_name+"* registrada. Total: *"+fmt(Math.max(0,s.total_price-(parseFloat(s.discount)||0)))+"*. Pag: "+s.payment_method+". Obrigado!";window.open("https://wa.me/?text="+encodeURIComponent(m),"_blank");}} style={{background:"none",border:"none",color:"#25d366",padding:".2rem"}} title="WhatsApp"><span style={{fontSize:13}}>📱</span></button>}
                     <button onClick={()=>{setEditing({...s,quantity:String(s.quantity),unit_price:String(s.unit_price)});setModal("editSale");}} style={{background:"none",border:"none",color:"#4f5ef0",padding:".2rem"}} title="Editar"><Ic n="edit" s={13}/></button>
                     {isAdmin&&<button onClick={()=>deleteSale(s.id)} style={{background:"none",border:"none",color:"var(--tx6)",padding:".2rem"}} title="Excluir"><Ic n="trash" s={13}/></button>}
@@ -1831,7 +1872,7 @@ export default function App(){
             {zeroStk.length>0&&<KCard label="Zerados" value={zeroStk.length} color="#f56565"/>}
           </div>
           {(()=>{
-            const soon=products.filter(p=>p.expiry&&daysUntil(p.expiry)!==null&&daysUntil(p.expiry)<=30).sort((a,b)=>daysUntil(a.expiry)-daysUntil(b.expiry));
+            const soon=(products||[]).filter(p=>p.expiry&&daysUntil(p.expiry)!==null&&daysUntil(p.expiry)<=30).sort((a,b)=>daysUntil(a.expiry)-daysUntil(b.expiry));
             if(!soon.length)return null;
             return(
               <div style={{background:"var(--card)",border:"1px solid #f59e0b40",borderRadius:".65rem",padding:".7rem 1rem",marginBottom:".65rem"}}>
@@ -1868,7 +1909,16 @@ export default function App(){
                         {p.supplier_name&&<Badge color="#8b44f0" sm>🏭 {p.supplier_name}</Badge>}
                         {days!==null&&days<=30&&<Badge color={expColor(days)} sm>{days<0?"Vencido":`Vcto ${days}d`}</Badge>}
                       </div>
-                      <div style={{fontSize:".65rem",color:"var(--tx5)"}}>{p.code}{p.batch&&` · Lote: ${p.batch}`}</div>
+                      <div style={{fontSize:".65rem",color:"var(--tx5)"}}>
+                      {p.code}{p.batch&&` · Lote: ${p.batch}`}
+                      {(()=>{
+                        const sold30=(sales||[]).filter(s=>{try{const d=new Date(s.created_at);return(s.product_id===p.id||s.product_name===p.name)&&d>new Date(Date.now()-30*864e5);}catch{return false;}}).reduce((a,s)=>a+(s.quantity||0),0);
+                        if(sold30<=0||p.stock_qty<=0)return null;
+                        const daysLeft=Math.floor((p.stock_qty/sold30)*30);
+                        const col=daysLeft<7?"#f56565":daysLeft<15?"#f59e0b":"#10b981";
+                        return<span style={{marginLeft:".4rem",color:col,fontWeight:600}}>· ~{daysLeft}d estoque</span>;
+                      })()}
+                    </div>
                     </div>
                     <div style={{display:"flex",gap:".35rem",flexShrink:0,marginLeft:".65rem"}}>
                       {canEdit&&<><button onClick={()=>{setStF({product_id:p.id,qty:"",cost_total:"",notes:""});setModal("stockEntry");}} style={{background:"#0e1e0e",border:"1px solid #10b98130",borderRadius:".4rem",padding:".28rem .5rem",color:"#10b981",display:"flex",alignItems:"center"}}><Ic n="arrup" s={11}/></button>
@@ -1893,7 +1943,6 @@ export default function App(){
               <XBtn rows={fCash.map(x=>({Data:x.date,Descrição:x.description,Tipo:x.type==="entrada"?"Entrada":"Saída",Valor:fmt(x.value),Categoria:x.category||"",Produto:x.product_name||""}))} name="caixa-caixapro" sheet="Caixa"/>
               <PBtn cols={[{k:"Data",l:"Data"},{k:"Descrição",l:"Descrição"},{k:"Tipo",l:"Tipo"},{k:"Valor",l:"Valor"},{k:"Categoria",l:"Categoria"}]} rows={fCash.map(x=>({Data:x.date,Descrição:x.description,Tipo:x.type==="entrada"?"Entrada":"Saída",Valor:fmt(x.value),Categoria:x.category||""}))} name="caixa-caixapro" title="Relatório de Caixa"/>
               <Btn sm v="ghost" onClick={()=>{setLocalTaxes(JSON.parse(JSON.stringify(cardTaxes)));setShowCardConfig(true);}}>💳 Taxas de Cartão</Btn>
-              <Btn sm v="ghost" onClick={()=>{setLocalTaxes(JSON.parse(JSON.stringify(cardTaxes)));setShowCardConfig(true);}}>💳 Taxas</Btn>
               {canEdit&&<Btn sm onClick={()=>setModal("cashTx")}><Ic n="plus" s={12}/>Lançamento</Btn>}
             </div>
           </div>
@@ -2162,9 +2211,9 @@ export default function App(){
             </div>
             {/* KPIs pedidos */}
             <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(120px,1fr))",gap:".6rem",marginBottom:".75rem"}}>
-              <KCard label="Pendentes" value={fmtN(orders.filter(o=>o.status==="pendente"||o.status==="parcial").length)} sub={fmt(orders.filter(o=>o.status==="pendente"||o.status==="parcial").reduce((a,o)=>a+o.remaining_value,0))+" restante"} color="#f59e0b"/>
-              <KCard label="Recebidos" value={fmtN(orders.filter(o=>o.status==="recebido").length)} color="#10b981"/>
-              <KCard label="Total pago" value={fmt(orders.reduce((a,o)=>a+o.initial_value+(o.remaining_paid||0),0))} color="#4f5ef0"/>
+              <KCard label="Pendentes" value={fmtN(orders.filter(o=>o.status==="pendente"||o.status==="parcial").length)} sub={fmt((orders||[]).filter(o=>o.status==="pendente"||o.status==="parcial").reduce((a,o)=>a+o.remaining_value,0))+" restante"} color="#f59e0b"/>
+              <KCard label="Recebidos" value={fmtN((orders||[]).filter(o=>o.status==="recebido").length)} color="#10b981"/>
+              <KCard label="Total pago" value={fmt((orders||[]).reduce((a,o)=>a+(o.initial_value||0)+(o.remaining_paid||0),0))} color="#4f5ef0"/>
               <KCard label="A pagar" value={fmt(orders.filter(o=>o.status==="pendente").reduce((a,o)=>a+o.remaining_value,0))} color="#f56565"/>
             </div>
             {/* Lista pedidos */}
@@ -3909,6 +3958,66 @@ export default function App(){
         )}
         <div style={{display:"flex",justifyContent:"flex-end",marginTop:freteCalcResult?0:".5rem"}}>
           <Btn v="ghost" onClick={()=>{setShowFreteCalcInCart(false);setFreteCalcResult(null);setFreteCalcGeoList([]);}}>Cancelar</Btn>
+        </div>
+      </Modal>
+    )}
+
+
+    {/* ══ EDITAR PEDIDO ══ */}
+    {editingOrder&&(
+      <Modal title={"✏️ Editar Pedido — "+editingOrder.supplier_name} onClose={()=>setEditingOrder(null)} icon="edit">
+        <div style={{display:"grid",gap:".65rem"}}>
+          <div>
+            <div style={{fontSize:".65rem",color:"var(--sub)",marginBottom:".28rem"}}>Fornecedor</div>
+            <select value={editingOrder.supplier_id||""} onChange={e=>{
+              const s=suppliers.find(x=>x.id===e.target.value);
+              setEditingOrder(v=>({...v,supplier_id:e.target.value,supplier_name:s?.name||v.supplier_name}));
+            }} style={IS}>
+              <option value="">Selecione...</option>
+              {suppliers.map(s=><option key={s.id} value={s.id}>{s.name}</option>)}
+            </select>
+          </div>
+          <R2>
+            <Inp label="Data do pedido" type="date" value={editingOrder.order_date||""} onChange={e=>setEditingOrder(v=>({...v,order_date:e.target.value}))}/>
+            <div>
+              <div style={{fontSize:".65rem",color:"var(--sub)",marginBottom:".28rem"}}>Sinal (%)</div>
+              <input type="number" min="0" max="100" step="1" onFocus={e=>e.target.select()} value={editingOrder.initial_pct||""} onChange={e=>{
+                const pct=parseFloat(e.target.value)||0;
+                const initVal=Math.round(editingOrder.total_value*(pct/100)*100)/100;
+                const remVal=Math.max(0,Math.round((editingOrder.total_value-initVal)*100)/100);
+                setEditingOrder(v=>({...v,initial_pct:e.target.value,initial_value:initVal,remaining_value:remVal}));
+              }} style={IS}/>
+            </div>
+          </R2>
+          <Inp label="Observações" hint="opcional" value={editingOrder.notes||""} onChange={e=>setEditingOrder(v=>({...v,notes:e.target.value}))}/>
+          <div style={{background:"var(--pill)",borderRadius:".5rem",padding:".65rem .85rem"}}>
+            <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(120px,1fr))",gap:".5rem"}}>
+              {[{l:"Total",v:fmt(editingOrder.total_value),c:"var(--tx)"},{l:"Sinal",v:fmt(editingOrder.initial_value),c:"#f59e0b"},{l:"Restante",v:fmt(editingOrder.remaining_value),c:"#f56565"}].map(m=>(
+                <div key={m.l} style={{textAlign:"center"}}>
+                  <div style={{fontSize:".6rem",color:"var(--sub)",textTransform:"uppercase"}}>{m.l}</div>
+                  <div style={{fontWeight:700,color:m.c,fontFamily:"'Syne',sans-serif"}}>{m.v}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+        <div style={{display:"flex",gap:".5rem",justifyContent:"flex-end",marginTop:"1rem"}}>
+          <Btn v="ghost" onClick={()=>setEditingOrder(null)}>Cancelar</Btn>
+          <Btn v="ok" onClick={async()=>{
+            try{
+              await supabase.from("orders").update({
+                supplier_id:editingOrder.supplier_id||null,
+                supplier_name:editingOrder.supplier_name,
+                order_date:editingOrder.order_date,
+                initial_pct:parseFloat(editingOrder.initial_pct)||0,
+                initial_value:parseFloat(editingOrder.initial_value)||0,
+                remaining_value:parseFloat(editingOrder.remaining_value)||0,
+                notes:editingOrder.notes||null,
+              }).eq("id",editingOrder.id);
+              toast$("✅ Pedido atualizado!");
+              setEditingOrder(null);
+            }catch(e){toast$("Erro: "+e.message,"#f56565");}
+          }}><Ic n="save" s={13}/>Salvar</Btn>
         </div>
       </Modal>
     )}
