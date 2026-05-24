@@ -1332,6 +1332,7 @@ export default function App(){
   };
 
   const deleteOrder=async(order)=>{
+    if(!window.confirm("Excluir pedido de "+order.supplier_name+"? Todo o fluxo será revertido (estoque e caixa)."))return;
     const items=JSON.parse(order.items||"[]");
     try{
       // 1. Reverter estoque APENAS dos itens efetivamente recebidos
@@ -1379,8 +1380,9 @@ export default function App(){
     loadReceivables();toast$("✅ Recebido e lançado no caixa!");
   };
   const deleteReceivable=async(id)=>{
+    if(!window.confirm("Excluir esta conta a receber?"))return;
     await supabase.from("receivables").delete().eq("id",id);
-    loadReceivables();toast$("Removido.","#f59e0b");
+    loadReceivables();toast$("Conta a receber removida.","#f59e0b");
   };
   const saveClient=async()=>{
     await supabase.from("clients").update({name:editing.name,email:editing.email,phone:editing.phone,notes:editing.notes,dose:editing.dose||null,interval_days:parseInt(editing.interval_days)||7,treatment_start:editing.treatment_start||null,treatment_notes:editing.treatment_notes||null}).eq("id",editing.id);
@@ -1393,6 +1395,7 @@ export default function App(){
     toast$("Venda atualizada!");setModal(null);setEditing(null);
   };
   const deleteSale=async(id)=>{
+    if(!window.confirm("Excluir esta venda? O estoque e lançamentos serão revertidos."))return;
     try{
       // 1. Buscar a venda clicada
       const sale=sales.find(s=>s.id===id);
@@ -1476,7 +1479,11 @@ export default function App(){
     await supabase.from("cash_transactions").update({description:editing.description,value:parseFloat(editing.value)||0,type:editing.type,category:editing.category||""}).eq("id",editing.id);
     toast$("Atualizado!");setModal(null);setEditing(null);
   };
-  const deleteCash=async id=>{await supabase.from("cash_transactions").delete().eq("id",id);toast$("Removido.","#f59e0b");};
+  const deleteCash=async id=>{
+    if(!window.confirm("Excluir este lançamento do caixa? Esta ação não pode ser desfeita."))return;
+    await supabase.from("cash_transactions").delete().eq("id",id);
+    toast$("Lançamento removido.","#f59e0b");
+  };
 
   const addProduct=async()=>{
     if(!pf.name||!pf.cost_per_unit||!pf.price_per_unit){toast$("Preencha nome, custo e preço.","#f56565");return;}
@@ -1496,7 +1503,12 @@ export default function App(){
     await supabase.from("products").update({code:editing.code,name:editing.name,description:editing.description,category:editing.category,unit:editing.unit,cost_per_unit:parseFloat(editing.cost_per_unit),price_per_unit:parseFloat(editing.price_per_unit),units_per_pack:parseInt(editing.units_per_pack)||1,batch:editing.batch,expiry:editing.expiry||null,stock_qty:parseInt(editing.stock_qty),min_stock:parseInt(editing.min_stock)||5,supplier_id:editing.supplier_id||null,supplier_name:sup?.name||null,markup,margin,profit,parent_product_id:editing.parent_product_id||null,qty_per_parent:parseFloat(editing.qty_per_parent)||1,total_mg:parseFloat(editing.total_mg)||null,dose_mg:parseFloat(editing.dose_mg)||null}).eq("id",editing.id);
     toast$("Produto atualizado!");setModal(null);setEditing(null);
   };
-  const delProduct=async id=>{await supabase.from("products").delete().eq("id",id);toast$("Removido.","#f59e0b");setModal(null);setEditing(null);};
+  const delProduct=async id=>{
+    if(!window.confirm("Excluir produto? Esta ação não pode ser desfeita."))return;
+    await supabase.from("products").delete().eq("id",id);
+    toast$("Produto removido.","#f59e0b");
+    setModal(null);setEditing(null);
+  };
 
   const addClient=async()=>{
     if(!cf.name){toast$("Nome é obrigatório.","#f56565");return;}
@@ -1507,7 +1519,22 @@ export default function App(){
     }catch(ex){toast$("Erro de conexão.","#f56565");}
   };
 
-  const delClient=async id=>{await supabase.from("clients").delete().eq("id",id);toast$("Removido.","#f59e0b");};
+  const delSupp=async id=>{
+    if(!window.confirm("Excluir fornecedor? Os pedidos vinculados não serão afetados."))return;
+    await supabase.from("suppliers").delete().eq("id",id);
+    setSuppliers(prev=>prev.filter(s=>s.id!==id));
+    toast$("Fornecedor removido.","#f59e0b");
+  };
+
+  const delClient=async id=>{
+    const clientSales=sales.filter(s=>s.client_id===id).length;
+    const msg=clientSales>0
+      ?"Excluir cliente? Ele possui "+clientSales+" venda(s) vinculada(s). O histórico será desvinculado."
+      :"Excluir este cliente?";
+    if(!window.confirm(msg))return;
+    await supabase.from("clients").delete().eq("id",id);
+    toast$("Cliente removido.","#f59e0b");
+  };
 
   const addSupp=async()=>{
     if(!supf.name){toast$("Nome obrigatório.","#f56565");return;}
@@ -2261,7 +2288,7 @@ export default function App(){
                           <button onClick={()=>markOrderLost(order)} title="Marcar como perdido" style={{background:"#1e1010",border:"1px solid #3a1515",borderRadius:".4rem",padding:".28rem .55rem",color:"#f59e0b",fontSize:".7rem",fontFamily:"'DM Sans',sans-serif",fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}}>💀</button>
                         )}
                         {canEdit&&(order.status==="pendente"||order.status==="parcial")&&<button onClick={()=>setEditingOrder(order)} style={{background:"none",border:"none",color:"#4f5ef0",padding:".2rem"}}><Ic n="edit" s={13}/></button>}
-                        {isAdmin&&<button onClick={()=>{if(window.confirm("Excluir pedido e reverter todo o fluxo? Esta ação não pode ser desfeita."))deleteOrder(order);}} style={{background:"none",border:"none",color:"var(--tx6)",padding:".2rem"}} title="Excluir e reverter tudo"><Ic n="trash" s={13}/></button>}
+                        {isAdmin&&<button onClick={()=>deleteOrder(order)} style={{background:"none",border:"none",color:"var(--tx6)",padding:".2rem"}} title="Excluir e reverter tudo"><Ic n="trash" s={13}/></button>}
                       </div>
                     </div>
                     {/* Financeiro */}
@@ -3128,7 +3155,52 @@ export default function App(){
     )}
 
     {/* Editar venda */}
-    {modal==="editSale"&&editing&&(
+    {
+    {/* ── EDITAR PRODUTO ── */}
+    {modal==="editProd"&&editing&&(
+      <Modal title={"✏️ "+editing.name} onClose={()=>{setModal(null);setEditing(null);}} icon="edit" wide>
+        <R2>
+          <Inp label="Código" value={editing.code||""} onChange={e=>setEditing(v=>({...v,code:e.target.value}))}/>
+          <Sel label="Categoria" value={editing.category||"outro"} onChange={e=>setEditing(v=>({...v,category:e.target.value}))}>
+            {activeCats.map(c=><option key={c.key} value={c.key}>{c.icon} {c.label}</option>)}
+          </Sel>
+        </R2>
+        <Inp label="Nome *" value={editing.name||""} onChange={e=>setEditing(v=>({...v,name:e.target.value}))}/>
+        <R2>
+          <Sel label="Fornecedor" hint="opcional" value={editing.supplier_id||""} onChange={e=>setEditing(v=>({...v,supplier_id:e.target.value}))}>
+            <option value="">Nenhum</option>
+            {suppliers.map(s=><option key={s.id} value={s.id}>{s.name}</option>)}
+          </Sel>
+          <Inp label="Unidade" value={editing.unit||"un"} onChange={e=>setEditing(v=>({...v,unit:e.target.value}))}/>
+        </R2>
+        <R2>
+          <Inp label="Lote" value={editing.batch||""} onChange={e=>setEditing(v=>({...v,batch:e.target.value}))}/>
+          <Inp label="Vencimento" type="date" value={editing.expiry||""} onChange={e=>setEditing(v=>({...v,expiry:e.target.value}))}/>
+        </R2>
+        <R2>
+          <Inp label="Custo/un (R$)" type="number" min="0" step="0.01" onFocus={e=>e.target.select()} value={editing.cost_per_unit||""} onChange={e=>setEditing(v=>({...v,cost_per_unit:e.target.value}))}/>
+          <Inp label="Preço venda/un (R$)" type="number" min="0" step="0.01" onFocus={e=>e.target.select()} value={editing.price_per_unit||""} onChange={e=>setEditing(v=>({...v,price_per_unit:e.target.value}))}/>
+        </R2>
+        <R2>
+          <Inp label="Estoque atual" type="number" min="0" onFocus={e=>e.target.select()} value={editing.stock_qty||""} onChange={e=>setEditing(v=>({...v,stock_qty:e.target.value}))}/>
+          <Inp label="Estoque mínimo" type="number" min="0" onFocus={e=>e.target.select()} value={editing.min_stock||""} onChange={e=>setEditing(v=>({...v,min_stock:e.target.value}))}/>
+        </R2>
+        {editing.category==="tirzepatida"&&(
+          <div style={{display:"flex",gap:".4rem",alignItems:"center"}}>
+            <span style={{fontSize:".65rem",color:"var(--sub)"}}>💊 Total mg/unidade:</span>
+            <input type="number" min="0" step="0.001" onFocus={e=>e.target.select()} value={editing.total_mg||""} onChange={e=>setEditing(v=>({...v,total_mg:e.target.value}))} placeholder="ex: 15" style={{...IS,width:80,color:"#8b44f0",fontWeight:700}}/>
+            <span style={{fontSize:".8rem",color:"var(--tx5)"}}>mg</span>
+          </div>
+        )}
+        <Inp label="Descrição" hint="opcional" value={editing.description||""} onChange={e=>setEditing(v=>({...v,description:e.target.value}))}/>
+        {(()=>{const{markup,margin}=calcM(editing.cost_per_unit,editing.price_per_unit);return markup>0&&(<div style={{background:"var(--pill)",borderRadius:".45rem",padding:".45rem .75rem",fontSize:".73rem",display:"flex",gap:"1rem"}}><span style={{color:"var(--tx4)"}}>Markup: <strong style={{color:"#f59e0b"}}>{fmtPct(markup)}</strong></span><span style={{color:"var(--tx4)"}}>Margem: <strong style={{color:"#10b981"}}>{fmtPct(margin)}</strong></span></div>);})()}
+        <div style={{display:"flex",gap:".5rem",justifyContent:"flex-end",marginTop:".5rem"}}>
+          <Btn v="ghost" onClick={()=>{setModal(null);setEditing(null);}}>Cancelar</Btn>
+          <Btn v="ok" onClick={saveProduct}><Ic n="save" s={13}/>Salvar</Btn>
+        </div>
+      </Modal>
+    )}
+modal==="editSale"&&editing&&(
       <Modal title="Editar Venda" onClose={()=>{setModal(null);setEditing(null);}} icon="edit">
         <Inp label="Produto" value={editing.product_name} onChange={e=>setEditing(v=>({...v,product_name:e.target.value}))}/>
         <R2><Inp label="Quantidade" type="number" min="1" value={editing.quantity} onChange={e=>setEditing(v=>({...v,quantity:e.target.value}))}/><Inp label="Preço unit. (R$)" type="number" min="0" step="0.01" value={editing.unit_price} onChange={e=>setEditing(v=>({...v,unit_price:e.target.value}))}/></R2>
@@ -3222,7 +3294,7 @@ export default function App(){
               <div><div style={{fontWeight:700,fontSize:".85rem",color:"var(--tx)"}}>🏭 {s.name}</div><div style={{fontSize:".7rem",color:"var(--tx5)",marginTop:".12rem"}}>{[s.contact,s.phone,s.email].filter(Boolean).join(" · ")||"Sem contato"}</div>{s.notes&&<div style={{fontSize:".68rem",color:"#8b44f0"}}>📝 {s.notes}</div>}</div>
               {isAdmin&&<div style={{display:"flex",gap:".3rem"}}>
                 <button onClick={()=>{setEditing({...s});setModal("editSupp");}} style={{background:"none",border:"none",color:"#4f5ef0"}}><Ic n="edit" s={13}/></button>
-                <button onClick={async()=>{await supabase.from("suppliers").delete().eq("id",s.id);toast$("Removido.","#f59e0b");}} style={{background:"none",border:"none",color:"var(--tx6)"}}><Ic n="trash" s={13}/></button>
+                <button onClick={async()=>{if(!window.confirm("Excluir fornecedor?"))return;await supabase.from("suppliers").delete().eq("id",s.id);toast$("Fornecedor removido.","#f59e0b");}} style={{background:"none",border:"none",color:"var(--tx6)"}}><Ic n="trash" s={13}/></button>
               </div>}
             </div>
           ))}
