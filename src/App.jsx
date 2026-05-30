@@ -1761,7 +1761,7 @@ export default function App(){
                 const key=now.getFullYear()+"-"+(now.getMonth()+1).toString().padStart(2,"0");
                 const mGoal=monthlyGoals[key]||parseFloat(monthGoal)||0;
                 const mReal=sales.filter(s=>{const d=new Date(s.created_at);return d>=monthStart&&d<=new Date(now.getFullYear(),now.getMonth()+1,0,23,59,59);}).reduce((a,s)=>a+s.total_price,0); // discount applied in batchRevenue
-                const mPct=mGoal>0?Math.min((mReal/mGoal)*100,100):0;
+                const mPct=mGoal>0?(mReal/mGoal)*100:0;
                 return(
                   <div style={{background:"linear-gradient(135deg,#4f5ef010,#10b98108)",border:"1px solid #4f5ef040",borderRadius:".65rem",padding:".7rem .85rem",marginBottom:".65rem"}}>
                     <div style={{display:"flex",alignItems:"center",gap:".75rem",marginBottom:".35rem"}}>
@@ -1772,11 +1772,11 @@ export default function App(){
                         <span style={{fontSize:".75rem",color:mReal>=mGoal&&mGoal>0?"#10b981":"var(--tx3)",fontWeight:600}}>{fmt(mReal)}</span>
                         <span style={{fontSize:".68rem",color:"var(--tx5)"}}>de</span>
                         <span style={{fontSize:".78rem",color:"var(--tx4)",fontWeight:600,fontFamily:"'Syne',sans-serif"}}>{mGoal>0?fmt(mGoal):"—"}</span>
-                        <span style={{fontSize:".72rem",fontWeight:700,color:mPct>=100?"#10b981":mPct>=70?"#f59e0b":"var(--tx5)",minWidth:42,textAlign:"right"}}>{mGoal>0?fmtPct(mPct):"—"}{mPct>=100?" 🏆":""}</span>
+                        <span style={{fontSize:".72rem",fontWeight:700,color:mPct>=100?"#10b981":mPct>=70?"#f59e0b":"var(--tx5)",minWidth:42,textAlign:"right"}}>{mGoal>0?fmtPct(mPct):"—"}{mPct>100?" 🚀":mPct>=100?" 🏆":""}</span>
                       </div>
                     </div>
                     <div style={{height:6,background:"var(--bdr)",borderRadius:3}}>
-                      <div style={{height:"100%",width:mPct+"%",background:mPct>=100?"linear-gradient(90deg,#10b981,#059669)":mPct>=70?"linear-gradient(90deg,#f59e0b,#d97706)":"linear-gradient(90deg,#4f5ef0,#8b44f0)",borderRadius:3,transition:"width .5s"}}/>
+                      <div style={{height:"100%",width:Math.min(100,mPct)+"%",background:mPct>=100?"linear-gradient(90deg,#10b981,#059669)":mPct>=70?"linear-gradient(90deg,#f59e0b,#d97706)":"linear-gradient(90deg,#4f5ef0,#8b44f0)",borderRadius:3,transition:"width .5s"}}/>
                     </div>
                   </div>
                 );
@@ -2669,7 +2669,7 @@ export default function App(){
                 const goal=monthlyGoals[key]||0;
                 const mStart=new Date(gYear,mi,1);const mEnd=new Date(gYear,mi+1,0,23,59,59);
                 const real=batchRevenue(sales.filter(s=>{const d=new Date(s.created_at);return d>=mStart&&d<=mEnd;}));
-                const pct=goal>0?Math.min((real/goal)*100,100):0;
+                const pct=goal>0?(real/goal)*100:0;
                 const isCurrent=new Date().getFullYear()===gYear&&new Date().getMonth()===mi;
                 const isPast=new Date(gYear,mi+1,1)<new Date();
                 return{key,mName,mi,goal,real,pct,isCurrent,isPast};
@@ -2699,10 +2699,10 @@ export default function App(){
                           <span style={{fontSize:".75rem",color:r.real>=r.goal&&r.goal>0?"#10b981":"var(--tx3)",fontWeight:600}}>{fmt(r.real)}</span>
                           <span style={{fontSize:".65rem",color:"var(--tx5)"}}>de</span>
                           <input type="number" min="0" step="100" onFocus={e=>e.target.select()} value={r.goal||""} onChange={e=>saveMonthlyGoal(r.key,e.target.value)} placeholder="R$ meta..." style={{width:100,background:"var(--inp)",border:"1px solid var(--bdr2)",borderRadius:".35rem",padding:".3rem .5rem",color:"#4f5ef0",fontWeight:700,fontSize:".78rem",fontFamily:"'DM Sans',sans-serif",outline:"none",textAlign:"right"}}/>
-                          <span style={{fontSize:".72rem",fontWeight:700,color:r.pct>=100?"#10b981":r.pct>=70?"#f59e0b":r.isPast&&r.goal>0?"#f56565":"var(--tx5)",minWidth:42,textAlign:"right"}}>{r.goal>0?fmtPct(r.pct):"—"}{r.pct>=100?" 🏆":""}</span>
+                          <span style={{fontSize:".72rem",fontWeight:700,color:r.pct>=100?"#10b981":r.pct>=70?"#f59e0b":r.isPast&&r.goal>0?"#f56565":"var(--tx5)",minWidth:42,textAlign:"right"}}>{r.goal>0?fmtPct(r.pct):"—"}{r.pct>100?" 🚀":r.pct>=100?" 🏆":""}</span>
                         </div>
                         <div style={{height:5,background:"var(--bdr)",borderRadius:3}}>
-                          <div style={{height:"100%",width:r.pct+"%",background:r.pct>=100?"linear-gradient(90deg,#10b981,#059669)":r.pct>=70?"linear-gradient(90deg,#f59e0b,#d97706)":"linear-gradient(90deg,#4f5ef0,#8b44f0)",borderRadius:3,transition:"width .5s"}}/>
+                          <div style={{height:"100%",width:Math.min(100,r.pct)+"%",background:r.pct>=100?"linear-gradient(90deg,#10b981,#059669)":r.pct>=70?"linear-gradient(90deg,#f59e0b,#d97706)":"linear-gradient(90deg,#4f5ef0,#8b44f0)",borderRadius:3,transition:"width .5s"}}/>
                         </div>
                       </div>
                     ))}
@@ -3277,24 +3277,24 @@ export default function App(){
     {modal==="produto"&&(
       <Modal title="Novo Produto" onClose={()=>setModal(null)} icon="product" wide>
         <R2><Inp label="Código" hint="auto" placeholder="PRD-001" value={pf.code} onChange={e=>setPf(f=>({...f,code:e.target.value}))}/><Sel label="Categoria" value={pf.category} onChange={e=>setPf(f=>({...f,category:e.target.value}))}>{activeCats.map(c=><option key={c.key} value={c.key}>{c.icon} {c.label}</option>)}</Sel></R2>
-                <Inp label="Nome *" value={editing.name} onChange={e=>setEditing(v=>({...v,name:e.target.value}))}/>
-        <R2><Sel label="Fornecedor" value={editing.supplier_id||""} onChange={e=>setEditing(v=>({...v,supplier_id:e.target.value}))}><option value="">Nenhum</option>{suppliers.map(s=><option key={s.id} value={s.id}>{s.name}</option>)}</Sel><Inp label="Unidade" value={editing.unit||"un"} onChange={e=>setEditing(v=>({...v,unit:e.target.value}))}/></R2>
-        <R2><Inp label="Lote" value={editing.batch||""} onChange={e=>setEditing(v=>({...v,batch:e.target.value}))}/><Inp label="Vencimento" type="date" value={editing.expiry||""} onChange={e=>setEditing(v=>({...v,expiry:e.target.value}))}/></R2>
-        <R2><Inp label="Custo/un (R$)" type="number" min="0" step="0.01" value={editing.cost_per_unit} onChange={e=>setEditing(v=>({...v,cost_per_unit:e.target.value}))}/><Inp label="Preço venda/un (R$)" type="number" min="0" step="0.01" value={editing.price_per_unit} onChange={e=>setEditing(v=>({...v,price_per_unit:e.target.value}))}/></R2>
-        <MPreview cost={editing.cost_per_unit} price={editing.price_per_unit}/>
-        <R2><Inp label="Estoque atual" type="number" min="0" onFocus={e=>e.target.select()} value={editing.stock_qty} onChange={e=>setEditing(v=>({...v,stock_qty:e.target.value}))}/><Inp label="Estoque mínimo" type="number" min="0" value={editing.min_stock} onChange={e=>setEditing(v=>({...v,min_stock:e.target.value}))}/></R2>
-        {editing.category==="tirzepatida"&&(
+                <Inp label="Nome *" value={pf.name} onChange={e=>setPf(f=>({...f,name:e.target.value}))}/>
+        <R2><Sel label="Fornecedor" value={pf.supplier_id||""} onChange={e=>setPf(f=>({...f,supplier_id:e.target.value}))}><option value="">Nenhum</option>{suppliers.map(s=><option key={s.id} value={s.id}>{s.name}</option>)}</Sel><Inp label="Unidade" value={pf.unit||"un"} onChange={e=>setPf(f=>({...f,unit:e.target.value}))}/></R2>
+        <R2><Inp label="Lote" value={pf.batch||""} onChange={e=>setPf(f=>({...f,batch:e.target.value}))}/><Inp label="Vencimento" type="date" value={pf.expiry||""} onChange={e=>setPf(f=>({...f,expiry:e.target.value}))}/></R2>
+        <R2><Inp label="Custo/un (R$)" type="number" min="0" step="0.01" value={pf.cost_per_unit} onChange={e=>setPf(f=>({...f,cost_per_unit:e.target.value}))}/><Inp label="Preço venda/un (R$)" type="number" min="0" step="0.01" value={pf.price_per_unit} onChange={e=>setPf(f=>({...f,price_per_unit:e.target.value}))}/></R2>
+        <MPreview cost={pf.cost_per_unit} price={pf.price_per_unit}/>
+        <R2><Inp label="Estoque atual" type="number" min="0" onFocus={e=>e.target.select()} value={pf.stock_qty} onChange={e=>setPf(f=>({...f,stock_qty:e.target.value}))}/><Inp label="Estoque mínimo" type="number" min="0" value={pf.min_stock} onChange={e=>setPf(f=>({...f,min_stock:e.target.value}))}/></R2>
+        {pf.category==="tirzepatida"&&(
           <div>
             <div style={{fontSize:".65rem",color:"var(--sub)",marginBottom:".28rem"}}>Total mg / unidade <span style={{color:"var(--tx6)"}}>(opcional)</span></div>
             <div style={{display:"flex",gap:".4rem",alignItems:"center"}}>
-              <input type="number" min="0" step="0.001" value={editing.total_mg||""} onChange={e=>setEditing(v=>({...v,total_mg:e.target.value}))} placeholder="Ex: 15" style={{...IS,width:90,color:"#8b44f0",fontWeight:700}}/>
+              <input type="number" min="0" step="0.001" value={pf.total_mg||""} onChange={e=>setPf(f=>({...f,total_mg:e.target.value}))} placeholder="Ex: 15" style={{...IS,width:90,color:"#8b44f0",fontWeight:700}}/>
               <span style={{fontSize:".8rem",color:"var(--tx5)"}}>mg / unidade</span>
             </div>
           </div>
         )}
         <div style={{display:"flex",gap:".5rem",justifyContent:"space-between"}}>
-          {isAdmin&&<Btn v="del" sm onClick={()=>delProduct(editing.id)}><Ic n="trash" s={12}/>Excluir</Btn>}
-          <div style={{display:"flex",gap:".5rem",marginLeft:"auto"}}><Btn v="ghost" onClick={()=>{setModal(null);setEditing(null);}}>Cancelar</Btn><Btn onClick={saveProduct}><Ic n="save" s={13}/>Salvar</Btn></div>
+          {isAdmin&&<Btn v="del" sm onClick={()=>delProduct(pf.id)}><Ic n="trash" s={12}/>Excluir</Btn>}
+          <div style={{display:"flex",gap:".5rem",marginLeft:"auto"}}><Btn v="ghost" onClick={()=>setModal(null)}>Cancelar</Btn><Btn onClick={addProduct}><Ic n="save" s={13}/>Salvar</Btn></div>
         </div>
       </Modal>
     )}
@@ -3602,7 +3602,7 @@ export default function App(){
         const monthStart=new Date(goalYear,mi,1);
         const monthEnd=new Date(goalYear,mi+1,0,23,59,59);
         const mSales=sales.filter(s=>{const sd=new Date(s.created_at);return sd>=monthStart&&sd<=monthEnd;});const real=batchRevenue(mSales); // discount applied in batchRevenue
-        const pct=goal>0?Math.min((real/goal)*100,100):0;
+        const pct=goal>0?(real/goal)*100:0;
         const isCurrent=now.getFullYear()===goalYear&&now.getMonth()===mi;
         return{key,mName,mi,goal,real,pct,isCurrent};
       });
@@ -3642,11 +3642,11 @@ export default function App(){
                     <span style={{fontSize:".75rem",color:r.real>=r.goal&&r.goal>0?"#10b981":"var(--tx3)",fontWeight:600}}>{fmt(r.real)}</span>
                     <span style={{fontSize:".68rem",color:"var(--tx5)"}}>de</span>
                     <div style={{fontSize:".85rem",fontWeight:700,color:"#4f5ef0",fontFamily:"'Syne',sans-serif",minWidth:90,textAlign:"right"}}>{r.goal>0?fmt(r.goal):<span style={{color:"var(--tx6)",fontSize:".72rem"}}>—</span>}</div>
-                    <span style={{fontSize:".72rem",fontWeight:700,color:r.pct>=100?"#10b981":r.pct>=70?"#f59e0b":r.isPast&&r.goal>0?"#f56565":"var(--tx5)",minWidth:42,textAlign:"right"}}>{r.goal>0?fmtPct(r.pct):"—"}{r.pct>=100?" 🏆":r.isPast&&r.goal>0&&r.pct<70?" ❌":""}</span>
+                    <span style={{fontSize:".72rem",fontWeight:700,color:r.pct>=100?"#10b981":r.pct>=70?"#f59e0b":r.isPast&&r.goal>0?"#f56565":"var(--tx5)",minWidth:42,textAlign:"right"}}>{r.goal>0?fmtPct(r.pct):"—"}{r.pct>100?" 🚀":r.pct>=100?" 🏆":r.isPast&&r.goal>0&&r.pct<70?" ❌":""}</span>
                   </div>
                 </div>
                 <div style={{height:6,background:"var(--bdr)",borderRadius:3}}>
-                  <div style={{height:"100%",width:r.pct+"%",background:r.pct>=100?"linear-gradient(90deg,#10b981,#059669)":r.pct>=70?"linear-gradient(90deg,#f59e0b,#d97706)":"linear-gradient(90deg,#4f5ef0,#8b44f0)",borderRadius:3,transition:"width .5s"}}/>
+                  <div style={{height:"100%",width:Math.min(100,r.pct)+"%",background:r.pct>=100?"linear-gradient(90deg,#10b981,#059669)":r.pct>=70?"linear-gradient(90deg,#f59e0b,#d97706)":"linear-gradient(90deg,#4f5ef0,#8b44f0)",borderRadius:3,transition:"width .5s"}}/>
                 </div>
               </div>
             ))}
