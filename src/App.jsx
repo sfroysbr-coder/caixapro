@@ -635,6 +635,11 @@ export default function App(){
   const[clients,setClients]=useState([]);
   const[suppliers,setSupp]=useState([]);
   const[appUsers,setUsers]=useState([]);
+  const[treatments,setTreatments]=useState([]);
+  const[showTreatments,setShowTreatments]=useState(false);
+  const[editingTreatment,setEditingTreatment]=useState(null);
+  const[showCashFlow,setShowCashFlow]=useState(false);
+  const[showRanking,setShowRanking]=useState(false);
   const[syncing,setSyncing]=useState(false);
   const[lastSync,setLastSync]=useState(null);
 
@@ -724,6 +729,8 @@ export default function App(){
   const newCartItem=()=>({key:uid(),product_id:"",product_name:"",unit:"un",quantity:1,unit_price:0});
   const[cartItems,setCartItems]=useState([newCartItem()]);
   const[cartClient,setCartClient]=useState({id:"",name:""});
+  const[cartIsDirect,setCartIsDirect]=useState(false);
+  const[cartSupplierName,setCartSupplierName]=useState("");
   const[cartPayment,setCartPayment]=useState("PIX");
   const[cartNotes,setCartNotes]=useState("");
   const[cartFreight,setCartFreight]=useState("");
@@ -764,6 +771,8 @@ export default function App(){
       if(rv)setReceivables(rv);
       const{data:od}=await supabase.from("orders").select("*").order("created_at",{ascending:false});
       if(od)setOrders(od);
+      const{data:tr}=await supabase.from("treatments").select("*").order("next_purchase",{ascending:true});
+      if(tr)setTreatments(tr);
       // Carregar configurações do sistema (taxas cartão + metas)
       const{data:settings}=await supabase.from("app_settings").select("*");
       if(settings&&settings.length>0){
@@ -792,7 +801,7 @@ export default function App(){
 
   useEffect(()=>{
     if(!cu)return;load();
-    const tbls=["products","sales","cash_transactions","clients","suppliers","app_users","receivables","app_settings","orders"];
+    const tbls=["products","sales","cash_transactions","clients","suppliers","app_users","receivables","app_settings","orders","treatments"];
     const subs=tbls.map((t,i)=>supabase.channel(`ch${i}`).on("postgres_changes",{event:"*",schema:"public",table:t},load).subscribe());
     return()=>subs.forEach(s=>s.unsubscribe());
   },[cu,load]);
@@ -843,7 +852,7 @@ export default function App(){
   };
   const cartAddLine=()=>setCartItems(items=>[...items,newCartItem()]);
   const cartRemoveLine=key=>setCartItems(items=>items.length>1?items.filter(i=>i.key!==key):items);
-  const cartReset=()=>{setCartItems([newCartItem()]);setCartClient({id:"",name:""});setCartPayment("PIX");setCartNotes("");setCartFreight("");setCartDelivery(false);setCartDeliveryCost("");setCartDiscount("");setCartDiscountType("fixed");setCartParcelas(2);setCartCardBrand("Visa");};
+  const cartReset=()=>{setCartItems([newCartItem()]);setCartClient({id:"",name:""});setCartIsDirect(false);setCartSupplierName("");setCartPayment("PIX");setCartNotes("");setCartFreight("");setCartDelivery(false);setCartDeliveryCost("");setCartDiscount("");setCartDiscountType("fixed");setCartParcelas(2);setCartCardBrand("Visa");};
 
   const cartSubtotal=cartItems.reduce((a,i)=>a+i.unit_price*i.quantity,0);
   const cartFreightVal=parseFloat(cartFreight)||0;
@@ -891,16 +900,17 @@ export default function App(){
         added_by:cu.display_name,
         date:today(),
         // batch_id para agrupar itens da mesma venda
-        batch_id:batchId,
+        batch_id:batchId,is_direct:cartIsDirect,direct_status:cartIsDirect?"Encomenda":null,supplier_name:cartIsDirect?cartSupplierName:null,
       }));
 
       const{error:e1}=await supabase.from("sales").insert(saleRecords);
       if(e1){toast$("Erro ao registrar venda: "+e1.message,"#f56565");return;}
 
-      // 2. Baixar estoque de cada produto
-      for(const item of validItems){
-        // Deduz estoque do produto vendido
-        await deductStock(item.product_id,item.quantity);
+      // 2. Baixar estoque de cada produto (PULA se for venda direta)
+      if(!cartIsDirect){
+        for(const item of validItems){
+          await deductStock(item.product_id,item.quantity);
+        }
       }
 
       // 3. Montar lançamentos de caixa
@@ -1384,6 +1394,38 @@ export default function App(){
 
 
 
+  const saveTreatment=async(t)=>{
+    try{
+      const rec={id:t.id||uid(),client_id:t.client_id||null,client_name:t.client_name,product_name:t.product_name||null,current_dose_mg:parseFloat(t.current_dose_mg)||null,start_date:t.start_date||null,next_purchase:t.next_purchase||null,frequency_days:parseInt(t.frequency_days)||30,status:t.status||"ativo",notes:t.notes||null,added_by:cu.display_name};
+      if(t.id){await supabase.from("treatments").update(rec).eq("id",t.id);}
+      else{await supabase.from("treatments").insert([rec]);}
+      toast$("✅ Tratamento salvo!");
+      setEditingTreatment(null);
+      const{data}=await supabase.from("treatments").select("*").order("next_purchase",{ascending:true});
+      if(data)setTreatments(data);
+    }catch(e){toast$("Erro: "+e.message,"#f56565");}
+  };
+
+  const delTreatment=async(id)=>{
+    if(!window.confirm("Excluir este tratamento?"))return;
+    await supabase.from("treatments").delete().eq("id",id);
+    setTreatments(prev=>prev.filter(t=>t.id!==id));
+    toast$("Tratamento removido.","#f59e0b");
+  };
+
+  const advanceTreatment=async(t)=>{
+    // Avança para próxima compra: soma frequency_days à data
+    const next=new Date();next.setDate(next.getDate()+(parseInt(t.frequency_days)||30));
+    await supabase.from("treatments").update({next_purchase:next.toISOString().slice(0,10)}).eq("id",t.id);
+    setTreatments(prev=>prev.map(x=>x.id===t.id?{...x,next_purchase:next.toISOString().slice(0,10)}:x));
+    toast$("✅ Próxima compra reagendada!");
+  };
+
+  const loadTreatments=async()=>{
+    const{data}=await supabase.from("treatments").select("*").order("next_purchase",{ascending:true});
+    if(data)setTreatments(data);
+  };
+
   const loadReceivables=async()=>{
     const{data}=await supabase.from("receivables").select("*").order("due_date",{ascending:true});
     if(data)setReceivables(data);
@@ -1416,7 +1458,7 @@ export default function App(){
     toast$("Venda atualizada!");setModal(null);setEditing(null);
   };
   const deleteSale=async(id)=>{
-    if(!window.confirm('Excluir esta venda? O estoque e lançamentos serão revertidos.'))return;
+    if(!window.confirm('Excluir esta venda? Estoque (se aplicável) e lançamentos serão revertidos.'))return;
     try{
       // 1. Buscar a venda clicada
       const sale=sales.find(s=>s.id===id);
@@ -1428,9 +1470,9 @@ export default function App(){
         ? sales.filter(s=>s.batch_id===batchKey)
         : [sale];
 
-      // 3. Reverter estoque de CADA item do batch
+      // 3. Reverter estoque de CADA item do batch (PULA vendas diretas)
       for(const s of batchSales){
-        // Reverter estoque em cascata (produto + pai + avô...)
+        if(s.is_direct)continue; // venda direta não mexeu no estoque
         const dpid2=s.product_id||(products.find(p=>p.name===s.product_name)?.id);
         if(dpid2&&s.quantity>0)await restoreStock(dpid2,s.quantity);
       }
@@ -1573,6 +1615,12 @@ export default function App(){
       toast$("Usuário criado!");setModal(null);setUf(FU);
     }catch(ex){toast$("Erro de conexão.","#f56565");}
   };
+  const toggleUser=async(id,active)=>{
+    await supabase.from("app_users").update({active}).eq("id",id);
+    setUsers(prev=>prev.map(u=>u.id===id?{...u,active}:u));
+    toast$(active?"Usuário ativado.":"Usuário desativado.","#10b981");
+  };
+
   const saveUser=async()=>{
     const updates={display_name:editing.display_name,role:editing.role,active:editing.active};
     if(editing.new_password){if(editing.new_password.length<6){toast$("Mínimo 6 caracteres.","#f59e0b");return;}if(editing.new_password!==editing.new_password2){toast$("Senhas não coincidem.","#f56565");return;}updates.password_hash=hashPw(editing.new_password);}
@@ -1594,7 +1642,6 @@ export default function App(){
     {id:"clientes",l:"Clientes",n:"client"},
     {id:"produtos",l:"Produtos",n:"product"},
     {id:"pedidos",l:"Pedidos",n:"pkg"},
-    {id:"frete",l:"Frete",n:"delivery"},
     {id:"recebiveis",l:"A Receber",n:"dollar"},
     ...(isAdmin?[{id:"config",l:"Config",n:"settings"}]:[]),
   ];
@@ -1665,6 +1712,9 @@ export default function App(){
             <div style={{display:"flex",gap:".4rem",flexWrap:"wrap"}}>
               <Btn sm v="ghost" onClick={()=>setShowGoals(true)}>📅 Metas & Histórico</Btn>
               <Btn sm v="warn" onClick={()=>setShowOrderModal(true)}><Ic n="pkg" s={12}/>📦 Pedido de Compra</Btn>
+              <Btn sm v="ghost" onClick={()=>setShowTreatments(true)}>💊 Tratamentos</Btn>
+              <Btn sm v="ghost" onClick={()=>setShowRanking(true)}>🏆 Ranking</Btn>
+              <Btn sm v="ghost" onClick={()=>setShowCashFlow(true)}>💰 Fluxo Caixa</Btn>
               {isAdmin&&<Btn sm v="ghost" onClick={()=>{setTab("config");setConfigSection("usuarios");}}>⚙️ Config</Btn>}
             </div>
             <Btn v="info" onClick={()=>setShowA(true)}><Ic n="analytics" s={14}/> Relatório Gerencial</Btn>
@@ -1711,11 +1761,34 @@ export default function App(){
               </div>
             );
           })()}
+          {/* 💊 Recompras de tratamento próximas */}
+          {(()=>{
+            const ativos=(treatments||[]).filter(t=>t.status==="ativo"&&t.next_purchase);
+            const proximas=ativos.map(t=>({...t,dias:Math.ceil((new Date(t.next_purchase)-new Date())/864e5)})).filter(t=>t.dias<=7).sort((a,b)=>a.dias-b.dias);
+            if(proximas.length===0)return null;
+            return(
+              <div style={{background:"var(--card)",border:"1px solid #8b44f030",borderRadius:".75rem",padding:".8rem 1rem",marginBottom:".7rem"}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:".5rem"}}>
+                  <span style={{fontWeight:700,fontSize:".82rem",color:"#8b44f0"}}>💊 Recompras próximas ({proximas.length})</span>
+                  <button onClick={()=>setShowTreatments(true)} style={{background:"none",border:"none",color:"#8b44f0",fontSize:".68rem",fontWeight:600,cursor:"pointer"}}>Ver todos →</button>
+                </div>
+                <div style={{display:"flex",flexDirection:"column",gap:".35rem"}}>
+                  {proximas.slice(0,5).map(t=>(
+                    <div key={t.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",fontSize:".73rem"}}>
+                      <span style={{color:"var(--tx3)",fontWeight:600}}>{t.client_name}{t.current_dose_mg?` · ${t.current_dose_mg}mg`:""}</span>
+                      <span style={{fontWeight:700,color:t.dias<0?"#f56565":t.dias<=2?"#f59e0b":"#10b981"}}>{t.dias<0?`Atrasado ${Math.abs(t.dias)}d`:t.dias===0?"HOJE":`${t.dias}d`}</span>
+                    </div>
+                  ))}
+                  {proximas.length>5&&<span style={{fontSize:".68rem",color:"var(--sub)"}}>+{proximas.length-5} mais</span>}
+                </div>
+              </div>
+            );
+          })()}
 
           {/* Pedidos pendentes */}
           {(()=>{
-            const pedPend=orders.filter(o=>o.status==="pendente"||o.status==="parcial");
-            const perdidos=orders.filter(o=>o.status==="perdido");
+            const pedPend=(orders||[]).filter(o=>o.status==="pendente"||o.status==="parcial");
+            const perdidos=(orders||[]).filter(o=>o.status==="perdido");
             if(pedPend.length===0&&perdidos.length===0)return null;
             const allItems=pedPend.flatMap(o=>JSON.parse(o.items||"[]"));
             const prodMap={};
@@ -1748,7 +1821,7 @@ export default function App(){
           {(()=>{
             const now=new Date();
             const monthStart=new Date(now.getFullYear(),now.getMonth(),1);
-            const monthRev=cashTx.filter(t=>t.type==="entrada"&&new Date(t.created_at)>=monthStart).reduce((a,t)=>a+t.value,0);
+            const monthRev=(cashTx||[]).filter(t=>t.type==="entrada"&&new Date(t.created_at)>=monthStart).reduce((a,t)=>a+t.value,0);
             const goal=parseFloat(monthGoal)||0;
             const pend=(receivables||[]).filter(r=>!r.paid);
             const pendVal=pend.reduce((a,r)=>a+r.value,0);
@@ -1760,7 +1833,7 @@ export default function App(){
                 const mName=MONTHS_ABR[now.getMonth()];
                 const key=now.getFullYear()+"-"+(now.getMonth()+1).toString().padStart(2,"0");
                 const mGoal=monthlyGoals[key]||parseFloat(monthGoal)||0;
-                const mReal=sales.filter(s=>{const d=new Date(s.created_at);return d>=monthStart&&d<=new Date(now.getFullYear(),now.getMonth()+1,0,23,59,59);}).reduce((a,s)=>a+s.total_price,0); // discount applied in batchRevenue
+                const mReal=(sales||[]).filter(s=>{const d=new Date(s.created_at||Date.now());return d>=monthStart&&d<=new Date(now.getFullYear(),now.getMonth()+1,0,23,59,59);}).reduce((a,s)=>a+s.total_price,0); // discount applied in batchRevenue
                 const mPct=mGoal>0?(mReal/mGoal)*100:0;
                 return(
                   <div style={{background:"linear-gradient(135deg,#4f5ef010,#10b98108)",border:"1px solid #4f5ef040",borderRadius:".65rem",padding:".7rem .85rem",marginBottom:".65rem"}}>
@@ -1845,8 +1918,8 @@ export default function App(){
             <div style={{display:"flex",gap:".4rem",flexWrap:"wrap",alignItems:"center"}}>
               <XBtn rows={fSales.map(s=>({Data:s.date,Produto:s.product_name,Cliente:s.client_name||"—",Qtd:s.quantity,Preço:fmt(s.unit_price),Total:fmt(s.total_price),Pagamento:s.payment_method,Obs:s.notes||""}))} name="vendas-caixapro" sheet="Vendas"/>
               <PBtn cols={[{k:"Data",l:"Data"},{k:"Produto",l:"Produto"},{k:"Cliente",l:"Cliente"},{k:"Qtd",l:"Qtd"},{k:"Total",l:"Total"},{k:"Pagamento",l:"Pagamento"}]} rows={fSales.map(s=>({Data:s.date,Produto:s.product_name,Cliente:s.client_name||"—",Qtd:s.quantity,Total:fmt(s.total_price),Pagamento:s.payment_method}))} name="vendas-caixapro" title="Relatório de Vendas"/>
-              <Btn sm v="ghost" onClick={()=>setTab("frete")}><span style={{fontSize:11}}>🛵</span> Frete</Btn>
-              {canEdit&&<Btn sm onClick={()=>setModal("sale")}><Ic n="plus" s={12}/>Nova</Btn>}
+                <Btn sm v="ghost" onClick={()=>setTab("frete")}><span style={{fontSize:11}}>🛵</span> Frete</Btn>
+                {canEdit&&<Btn sm onClick={()=>setModal("sale")}><Ic n="plus" s={12}/>Nova</Btn>}
             </div>
           </div>
           <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(120px,1fr))",gap:".6rem",marginBottom:".7rem"}}>
@@ -3055,6 +3128,20 @@ export default function App(){
           </Field>
           <div>
             <div style={{fontSize:".68rem",color:"var(--sub)",textTransform:"uppercase",letterSpacing:".06em",marginBottom:".3rem"}}>Forma de Pagamento</div>
+            <div style={{marginTop:".6rem",padding:".6rem .75rem",background:cartIsDirect?"#f59e0b15":"var(--pill)",border:`1px solid ${cartIsDirect?"#f59e0b40":"var(--bdr)"}`,borderRadius:".5rem"}}>
+              <label style={{display:"flex",alignItems:"center",gap:".5rem",cursor:"pointer",fontSize:".8rem",fontWeight:600,color:cartIsDirect?"#f59e0b":"var(--tx3)"}}>
+                <input type="checkbox" checked={cartIsDirect} onChange={e=>setCartIsDirect(e.target.checked)} style={{width:16,height:16,accentColor:"#f59e0b"}}/>
+                🚀 Venda Direta / Encomenda (sem baixa de estoque)
+              </label>
+              {cartIsDirect&&(
+                <div style={{marginTop:".5rem"}}>
+                  <div style={{fontSize:".65rem",color:"var(--sub)",marginBottom:".25rem"}}>Fornecedor que enviará ao cliente</div>
+                  <input value={cartSupplierName} onChange={e=>setCartSupplierName(e.target.value)} placeholder="Nome do fornecedor" list="supp-list" style={IS}/>
+                  <datalist id="supp-list">{suppliers.map(s=><option key={s.id} value={s.name}/>)}</datalist>
+                  <div style={{fontSize:".68rem",color:"#f59e0b",marginTop:".35rem"}}>💡 O lucro entra no caixa, mas o estoque não é alterado.</div>
+                </div>
+              )}
+            </div>
             <select value={cartPayment} onChange={e=>setCartPayment(e.target.value)} style={IS}>
               <optgroup label="Sem taxa">
                 {activeSimplePays.map(m=><option key={m} value={m}>{m}</option>)}
@@ -4111,6 +4198,172 @@ export default function App(){
     )}
 
     {/* Logout */}
+    {/* ══ RANKING DE CLIENTES ══ */}
+    {showRanking&&(()=>{
+      const stats={};
+      (sales||[]).forEach(s=>{
+        const k=s.client_name||"Sem cliente";
+        if(!stats[k])stats[k]={name:k,revenue:0,cost:0,count:0,lastDate:null};
+        const rev=(parseFloat(s.total_price)||0)-(parseFloat(s.discount)||0);
+        stats[k].revenue+=rev;
+        const prod=(products||[]).find(p=>p.id===s.product_id||p.name===s.product_name);
+        stats[k].cost+=(parseFloat(prod?.cost_per_unit)||0)*(s.quantity||0);
+        stats[k].count+=1;
+        const d=new Date(s.created_at);
+        if(!stats[k].lastDate||d>stats[k].lastDate)stats[k].lastDate=d;
+      });
+      const ranked=Object.values(stats).map(c=>({...c,profit:c.revenue-c.cost,margin:c.revenue>0?((c.revenue-c.cost)/c.revenue)*100:0})).sort((a,b)=>b.revenue-a.revenue);
+      return(
+        <Modal title="🏆 Ranking de Clientes" onClose={()=>setShowRanking(false)} icon="dollar" wide>
+          <div style={{fontSize:".72rem",color:"var(--sub)",marginBottom:".75rem"}}>Ordenado por receita gerada · {ranked.length} cliente(s)</div>
+          <div style={{display:"grid",gap:".5rem"}}>
+            {ranked.slice(0,20).map((c,i)=>(
+              <div key={c.name} style={{display:"flex",alignItems:"center",gap:".6rem",padding:".6rem .75rem",background:i<3?"linear-gradient(135deg,#f59e0b12,#10b98108)":"var(--card)",border:`1px solid ${i<3?"#f59e0b30":"var(--bdr)"}`,borderRadius:".55rem"}}>
+                <span style={{fontSize:"1rem",fontWeight:800,color:i===0?"#f59e0b":i===1?"#94a3b8":i===2?"#b45309":"var(--tx6)",minWidth:28}}>{i===0?"🥇":i===1?"🥈":i===2?"🥉":"#"+(i+1)}</span>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{fontWeight:700,fontSize:".82rem",color:"var(--tx)",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{c.name}</div>
+                  <div style={{fontSize:".65rem",color:"var(--tx5)"}}>{c.count} compra(s) · margem {c.margin.toFixed(0)}%</div>
+                </div>
+                <div style={{textAlign:"right"}}>
+                  <div style={{fontWeight:700,fontSize:".85rem",color:"#10b981",fontFamily:"'Syne',sans-serif"}}>{fmt(c.revenue)}</div>
+                  <div style={{fontSize:".62rem",color:"var(--tx5)"}}>lucro {fmt(c.profit)}</div>
+                </div>
+              </div>
+            ))}
+            {ranked.length===0&&<div style={{textAlign:"center",padding:"2rem",color:"var(--tx6)"}}>Nenhuma venda registrada ainda.</div>}
+          </div>
+        </Modal>
+      );
+    })()}
+
+    {/* ══ FLUXO DE CAIXA PROJETADO ══ */}
+    {showCashFlow&&(()=>{
+      const hoje=new Date();
+      const saldoAtual=(cashTx||[]).reduce((a,t)=>a+(t.type==="entrada"?(parseFloat(t.value)||0):-(parseFloat(t.value)||0)),0);
+      const periodos=[{label:"30 dias",dias:30},{label:"60 dias",dias:60},{label:"90 dias",dias:90}];
+      const calc=(dias)=>{
+        const limite=new Date();limite.setDate(limite.getDate()+dias);
+        const aReceber=(receivables||[]).filter(r=>!r.paid&&r.due_date&&new Date(r.due_date)<=limite).reduce((a,r)=>a+(parseFloat(r.amount)||0),0);
+        const aPagar=(orders||[]).filter(o=>(o.status==="pendente"||o.status==="parcial")).reduce((a,o)=>a+(parseFloat(o.remaining_value)||0),0);
+        const recompras=(treatments||[]).filter(t=>t.status==="ativo"&&t.next_purchase&&new Date(t.next_purchase)<=limite).length;
+        return{aReceber,aPagar,recompras,projetado:saldoAtual+aReceber-aPagar};
+      };
+      return(
+        <Modal title="💰 Fluxo de Caixa Projetado" onClose={()=>setShowCashFlow(false)} icon="dollar" wide>
+          <div style={{background:"var(--pill)",borderRadius:".55rem",padding:".75rem 1rem",marginBottom:"1rem",textAlign:"center"}}>
+            <div style={{fontSize:".68rem",color:"var(--sub)",textTransform:"uppercase",letterSpacing:".5px"}}>Saldo atual em caixa</div>
+            <div style={{fontSize:"1.5rem",fontWeight:800,color:saldoAtual>=0?"#10b981":"#f56565",fontFamily:"'Syne',sans-serif"}}>{fmt(saldoAtual)}</div>
+          </div>
+          <div style={{display:"grid",gap:".65rem"}}>
+            {periodos.map(p=>{
+              const r=calc(p.dias);
+              return(
+                <div key={p.label} style={{padding:".75rem 1rem",background:"var(--card)",border:"1px solid var(--bdr)",borderRadius:".55rem"}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:".5rem"}}>
+                    <span style={{fontWeight:700,fontSize:".85rem",color:"#4f5ef0"}}>Próximos {p.label}</span>
+                    <span style={{fontWeight:800,fontSize:"1rem",color:r.projetado>=0?"#10b981":"#f56565",fontFamily:"'Syne',sans-serif"}}>{fmt(r.projetado)}</span>
+                  </div>
+                  <div style={{display:"flex",gap:"1rem",flexWrap:"wrap",fontSize:".7rem"}}>
+                    <span style={{color:"#10b981"}}>↗ A receber: {fmt(r.aReceber)}</span>
+                    <span style={{color:"#f56565"}}>↘ A pagar: {fmt(r.aPagar)}</span>
+                    {r.recompras>0&&<span style={{color:"#8b44f0"}}>🔄 {r.recompras} recompra(s) prevista(s)</span>}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          <div style={{fontSize:".68rem",color:"var(--tx6)",marginTop:".75rem",textAlign:"center"}}>Projeção baseada em contas a receber, pedidos a pagar e recompras de tratamentos ativos.</div>
+        </Modal>
+      );
+    })()}
+
+    {/* ══ PROTOCOLO DE TRATAMENTO ══ */}
+    {showTreatments&&(
+      <Modal title="💊 Protocolos de Tratamento" onClose={()=>setShowTreatments(false)} icon="product" wide>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:".75rem"}}>
+          <span style={{fontSize:".72rem",color:"var(--sub)"}}>{(treatments||[]).filter(t=>t.status==="ativo").length} ativo(s)</span>
+          <Btn sm onClick={()=>setEditingTreatment({client_name:"",product_name:"",current_dose_mg:"",start_date:new Date().toISOString().slice(0,10),next_purchase:"",frequency_days:"30",status:"ativo",notes:""})}><Ic n="plus" s={12}/>Novo Tratamento</Btn>
+        </div>
+        <div style={{display:"grid",gap:".55rem"}}>
+          {(treatments||[]).map(t=>{
+            const daysUntil=t.next_purchase?Math.ceil((new Date(t.next_purchase)-new Date())/864e5):null;
+            const urgent=daysUntil!==null&&daysUntil<=5;
+            const overdue=daysUntil!==null&&daysUntil<0;
+            return(
+              <div key={t.id} style={{padding:".7rem .85rem",background:overdue?"#f5656512":urgent?"#f59e0b12":"var(--card)",border:`1px solid ${overdue?"#f5656540":urgent?"#f59e0b40":"var(--bdr)"}`,borderRadius:".55rem"}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:".5rem"}}>
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{fontWeight:700,fontSize:".85rem",color:"var(--tx)"}}>{t.client_name}</div>
+                    <div style={{fontSize:".68rem",color:"var(--tx5)",marginTop:".15rem"}}>
+                      {t.product_name||"—"}{t.current_dose_mg?` · ${t.current_dose_mg}mg`:""} · a cada {t.frequency_days}d
+                    </div>
+                    {t.next_purchase&&(
+                      <div style={{fontSize:".7rem",marginTop:".3rem",fontWeight:600,color:overdue?"#f56565":urgent?"#f59e0b":"#10b981"}}>
+                        {overdue?`⚠️ Atrasado ${Math.abs(daysUntil)}d`:daysUntil===0?"🔔 Recompra HOJE":`📅 Próxima em ${daysUntil}d (${new Date(t.next_purchase).toLocaleDateString("pt-BR")})`}
+                      </div>
+                    )}
+                  </div>
+                  <div style={{display:"flex",gap:".25rem"}}>
+                    <button onClick={()=>advanceTreatment(t)} title="Comprou - reagendar" style={{background:"#10b98120",border:"none",borderRadius:".35rem",padding:".3rem .5rem",color:"#10b981",cursor:"pointer",fontSize:".7rem",fontWeight:600}}>✓ Comprou</button>
+                    <button onClick={()=>setEditingTreatment(t)} style={{background:"none",border:"none",color:"#4f5ef0",cursor:"pointer",padding:".3rem"}}><Ic n="edit" s={13}/></button>
+                    <button onClick={()=>delTreatment(t.id)} style={{background:"none",border:"none",color:"var(--tx6)",cursor:"pointer",padding:".3rem"}}><Ic n="trash" s={13}/></button>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+          {(treatments||[]).length===0&&<div style={{textAlign:"center",padding:"2rem",color:"var(--tx6)"}}>Nenhum tratamento cadastrado. Crie o primeiro!</div>}
+        </div>
+      </Modal>
+    )}
+
+    {/* ══ EDITAR/NOVO TRATAMENTO ══ */}
+    {editingTreatment&&(
+      <Modal title={editingTreatment.id?"✏️ Editar Tratamento":"💊 Novo Tratamento"} onClose={()=>setEditingTreatment(null)} icon="product">
+        <div style={{display:"grid",gap:".6rem"}}>
+          <div>
+            <div style={{fontSize:".65rem",color:"var(--sub)",marginBottom:".25rem"}}>Cliente *</div>
+            <input value={editingTreatment.client_name} onChange={e=>{const c=clients.find(x=>x.name===e.target.value);setEditingTreatment(v=>({...v,client_name:e.target.value,client_id:c?.id||v.client_id}));}} list="treat-clients" placeholder="Nome do cliente" style={IS}/>
+            <datalist id="treat-clients">{(clients||[]).map(c=><option key={c.id} value={c.name}/>)}</datalist>
+          </div>
+          <R2>
+            <div>
+              <div style={{fontSize:".65rem",color:"var(--sub)",marginBottom:".25rem"}}>Produto</div>
+              <input value={editingTreatment.product_name||""} onChange={e=>setEditingTreatment(v=>({...v,product_name:e.target.value}))} list="treat-prods" placeholder="Tirzepatida..." style={IS}/>
+              <datalist id="treat-prods">{(products||[]).map(p=><option key={p.id} value={p.name}/>)}</datalist>
+            </div>
+            <div>
+              <div style={{fontSize:".65rem",color:"var(--sub)",marginBottom:".25rem"}}>Dose atual (mg)</div>
+              <input type="number" step="0.1" value={editingTreatment.current_dose_mg||""} onChange={e=>setEditingTreatment(v=>({...v,current_dose_mg:e.target.value}))} placeholder="2.5" style={IS}/>
+            </div>
+          </R2>
+          <R2>
+            <div>
+              <div style={{fontSize:".65rem",color:"var(--sub)",marginBottom:".25rem"}}>Próxima compra</div>
+              <input type="date" value={editingTreatment.next_purchase||""} onChange={e=>setEditingTreatment(v=>({...v,next_purchase:e.target.value}))} style={IS}/>
+            </div>
+            <div>
+              <div style={{fontSize:".65rem",color:"var(--sub)",marginBottom:".25rem"}}>Frequência (dias)</div>
+              <input type="number" value={editingTreatment.frequency_days||"30"} onChange={e=>setEditingTreatment(v=>({...v,frequency_days:e.target.value}))} placeholder="30" style={IS}/>
+            </div>
+          </R2>
+          <div>
+            <div style={{fontSize:".65rem",color:"var(--sub)",marginBottom:".25rem"}}>Status</div>
+            <select value={editingTreatment.status||"ativo"} onChange={e=>setEditingTreatment(v=>({...v,status:e.target.value}))} style={IS}>
+              <option value="ativo">Ativo</option>
+              <option value="pausado">Pausado</option>
+              <option value="concluido">Concluído</option>
+            </select>
+          </div>
+          <Inp label="Observações" hint="opcional" value={editingTreatment.notes||""} onChange={e=>setEditingTreatment(v=>({...v,notes:e.target.value}))}/>
+        </div>
+        <div style={{display:"flex",gap:".5rem",justifyContent:"flex-end",marginTop:"1rem"}}>
+          <Btn v="ghost" onClick={()=>setEditingTreatment(null)}>Cancelar</Btn>
+          <Btn v="ok" onClick={()=>{if(!editingTreatment.client_name){toast$("Informe o cliente.","#f56565");return;}saveTreatment(editingTreatment);}}><Ic n="save" s={13}/>Salvar</Btn>
+        </div>
+      </Modal>
+    )}
+
     {logoutC&&(
       <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.8)",backdropFilter:"blur(6px)",zIndex:400,display:"flex",alignItems:"center",justifyContent:"center",padding:"1.25rem"}}>
         <div style={{background:"var(--bg3)",border:"1px solid var(--bdr2)",borderRadius:"1rem",padding:"1.65rem",maxWidth:290,width:"100%",textAlign:"center",boxShadow:"0 24px 64px var(--shadow)"}}>
