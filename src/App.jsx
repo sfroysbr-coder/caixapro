@@ -32,13 +32,22 @@ const CARD_MODES=[
   {key:"parc7a12",  label:"Parcelado 7-12x"},
 ];
 const DEFAULT_TAXES={
-  Visa:      {debito:1.99,vista:2.99,parc2a6:3.49,parc7a12:3.99},
-  Mastercard:{debito:1.89,vista:2.89,parc2a6:3.39,parc7a12:3.89},
-  Elo:       {debito:2.09,vista:3.09,parc2a6:3.59,parc7a12:4.09},
-  Hipercard: {debito:2.19,vista:3.19,parc2a6:3.69,parc7a12:4.19},
-  AmEx:      {debito:2.49,vista:3.49,parc2a6:3.99,parc7a12:4.49},
+  Visa:      {debito:1.99,vista:2.99,parc2a6:3.49,parc7a12:3.99,antecip:1.99},
+  Mastercard:{debito:1.89,vista:2.89,parc2a6:3.39,parc7a12:3.89,antecip:1.99},
+  Elo:       {debito:2.09,vista:3.09,parc2a6:3.59,parc7a12:4.09,antecip:2.09},
+  Hipercard: {debito:2.19,vista:3.19,parc2a6:3.69,parc7a12:4.19,antecip:2.19},
+  AmEx:      {debito:2.49,vista:3.49,parc2a6:3.99,parc7a12:4.49,antecip:2.49},
+  __opts:    {antecip:false},
 };
 const PAYS=["Dinheiro","PIX","Transferência","Débito","Crédito à Vista","Crédito Parcelado"];
+// Módulos liberáveis por usuário (operador/visualizador). Admin sempre vê tudo.
+const PERM_MODULES=[
+  {id:"dashboard",l:"📊 Dashboard"},
+  {id:"vendas",l:"🛒 Vendas"},
+  {id:"estoque",l:"📦 Estoque, Produtos e Pedidos"},
+  {id:"financeiro",l:"💵 Financeiro (caixa, contas, taxas)"},
+  {id:"clientes",l:"👥 Clientes"},
+];
 
 // Tema
 const getTheme=()=>{try{return localStorage.getItem("cpro:theme")!=="light"}catch{return true}};
@@ -146,7 +155,7 @@ const Btn=({children,onClick,v="p",sm,disabled,full})=>{
     xls:{background:"#14532d",color:"#4ade80",border:"1px solid #166834"},
     pdf:{background:"#450a0a",color:"#f87171",border:"1px solid #7f1d1d"},
   };
-  return <button onClick={onClick} disabled={disabled} style={{display:"inline-flex",alignItems:"center",gap:".35rem",padding:sm?".32rem .65rem":".52rem .95rem",borderRadius:".45rem",fontSize:sm?".73rem":".83rem",fontFamily:"'DM Sans',sans-serif",fontWeight:600,opacity:disabled?.5:1,width:full?"100%":undefined,justifyContent:full?"center":undefined,...(S[v]||S.p)}}>{children}</button>;
+  return <button onClick={onClick} disabled={disabled} style={{display:"inline-flex",alignItems:"center",gap:".35rem",padding:sm?".34rem .7rem":".55rem 1rem",borderRadius:".6rem",fontSize:sm?".74rem":".84rem",fontFamily:"'DM Sans',sans-serif",fontWeight:700,letterSpacing:".01em",opacity:disabled?.5:1,width:full?"100%":undefined,justifyContent:full?"center":undefined,boxShadow:disabled?undefined:({p:"0 2px 10px rgba(79,94,240,.28)",ok:"0 2px 10px rgba(16,185,129,.26)",info:"0 2px 10px rgba(8,145,178,.26)"}[v]||undefined),...(S[v]||S.p)}}>{children}</button>;
 };
 
 const Badge=({children,color="#4f5ef0",sm})=><span style={{fontSize:sm?".6rem":".65rem",fontWeight:600,color,background:color+"20",borderRadius:"99px",padding:sm?".1rem .4rem":".12rem .5rem",border:`1px solid ${color}35`,whiteSpace:"nowrap"}}>{children}</span>;
@@ -663,6 +672,7 @@ export default function App(){
   const[payables,setPayables]=useState([]);
   const[payForm,setPayForm]=useState({description:"",value:"",category:"aluguel",supplier_name:"",due_date:"",recurring:false,installments:1});
   const[finTab,setFinTab]=useState("resumo"); // sub-guia da tela Financeiro
+  const[estTab,setEstTab]=useState("estoque"); // sub-guia da tela Estoque
   //  Config global 
   const[configSection,setConfigSection]=useState("usuarios");
   const[dynCats,setDynCats]=useState(DEFAULT_CATS);
@@ -696,13 +706,15 @@ export default function App(){
       {id:"2",name:"Ponto 2",address:"",lat:null,lon:null},
       {id:"3",name:"Ponto 3",address:"",lat:null,lon:null},
     ],
-    base:5,ratePerKm:2.5,minFee:10,maxFee:0
+    base:5,ratePerKm:2.5,minFee:10,maxFee:0,
+    zonas:[]
   };
   const[freteConfig,setFreteConfig]=useState(defaultFreteConfig);
   const[localFrete,setLocalFrete]=useState(null);
   const[showFreteConfig,setShowFreteConfig]=useState(false);
   const[freteOrigem,setFreteOrigem]=useState(()=>freteConfig?.origens?.find(o=>o.lat)?.id||"1");
   const[freteDestino,setFreteDestino]=useState("");
+  const[zonaForm,setZonaForm]=useState({name:"",fee:""}); // zonas de entrega taxa fixa
   const[freteResult,setFreteResult]=useState(null);
   const[freteLoading,setFreteLoading]=useState(false);
   const[freteGeoList,setFreteGeoList]=useState([]);
@@ -774,7 +786,7 @@ export default function App(){
         supabase.from("cash_transactions").select("*").order("created_at",{ascending:false}),
         supabase.from("clients").select("*").order("name"),
         supabase.from("suppliers").select("*").order("name"),
-        supabase.from("app_users").select("id,username,display_name,role,active,last_login,created_at").order("created_at",{ascending:false}),
+        supabase.from("app_users").select("id,username,display_name,role,active,last_login,created_at,permissions").order("created_at",{ascending:false}),
       ]);
       if(a.data)setProds(a.data);if(b.data)setSales(b.data);if(c.data)setCash(c.data);
       if(d.data)setClients(d.data);if(e.data)setSupp(e.data);if(f.data)setUsers(f.data);
@@ -844,6 +856,14 @@ export default function App(){
 
   const isAdmin=cu?.role==="admin";
   const canEdit=cu?.role==="admin"||cu?.role==="operator";
+  // Pedidos a fornecedor (pendente/parcial) refletidos como contas a pagar futuras
+  const orderPayables=useMemo(()=>(orders||[]).filter(o=>o.status==="pendente"||o.status==="parcial").map(o=>({
+    id:"ord_"+o.id,_order:true,
+    description:"📦 Pedido · "+(o.supplier_name||"fornecedor"),
+    value:parseFloat(o.remaining_value)||0,
+    category:"fornecedor",supplier_name:o.supplier_name||null,
+    due_date:o.expected_date||null,paid:false
+  })),[orders]);
 
   // Sale handlers
   //  CART HELPERS 
@@ -1134,7 +1154,10 @@ export default function App(){
   //  CARD TAX HELPERS 
   const getCardTaxRate=(brand,mode)=>{
     const t=cardTaxes[brand]||DEFAULT_TAXES[brand]||{};
-    return parseFloat(t[mode])||0;
+    let r=parseFloat(t[mode])||0;
+    const opts=cardTaxes.__opts||DEFAULT_TAXES.__opts||{};
+    if(opts.antecip&&mode!=="debito")r+=parseFloat(t.antecip)||0;
+    return r;
   };
   const saveCardTaxes=async(newTaxes)=>{
     setCardTaxes(newTaxes);
@@ -1336,6 +1359,15 @@ export default function App(){
       setFreteConfig(cfg);
       toast$("✅ Configurações de frete salvas na nuvem!");
     }catch(e){toast$("Erro ao salvar: "+e.message,"#f56565");}
+  };
+  const addZona=()=>{
+    if(!zonaForm.name||!zonaForm.fee){toast$("Informe o bairro/região e o valor.","#f56565");return;}
+    const cfg={...freteConfig,zonas:[...(freteConfig.zonas||[]),{id:uid(),name:zonaForm.name,fee:parseFloat(zonaForm.fee)||0}]};
+    setFreteConfig(cfg);saveFreteConfig(cfg);setZonaForm({name:"",fee:""});
+  };
+  const delZona=(id)=>{
+    const cfg={...freteConfig,zonas:(freteConfig.zonas||[]).filter(z=>z.id!==id)};
+    setFreteConfig(cfg);saveFreteConfig(cfg);
   };
 
   const geocodeAddr=async(address)=>{
@@ -1720,7 +1752,7 @@ export default function App(){
   };
 
   const saveUser=async()=>{
-    const updates={display_name:editing.display_name,role:editing.role,active:editing.active};
+    const updates={display_name:editing.display_name,role:editing.role,active:editing.active,permissions:editing.role==="admin"?{}:(editing.permissions||{})};
     if(editing.new_password){if(editing.new_password.length<6){toast$("Mínimo 6 caracteres.","#f59e0b");return;}if(editing.new_password!==editing.new_password2){toast$("Senhas não coincidem.","#f56565");return;}updates.password_hash=hashPw(editing.new_password);}
     await supabase.from("app_users").update(updates).eq("id",editing.id);
     toast$("Usuário atualizado!");setModal(null);setEditing(null);
@@ -1738,10 +1770,14 @@ export default function App(){
     {id:"estoque",l:"Estoque",n:"stock"},
     {id:"financeiro",l:"Financeiro",n:"dollar"},
     {id:"clientes",l:"Clientes",n:"client"},
-    {id:"produtos",l:"Produtos",n:"product"},
-    {id:"pedidos",l:"Pedidos",n:"pkg"},
     ...(isAdmin?[{id:"config",l:"Config",n:"settings"}]:[]),
-  ];
+  ].filter(it=>isAdmin||it.id==="config"||((cu?.permissions||{})[it.id]!==false));
+  const allowedTabs=nav.map(n=>n.id).join(",");
+  useEffect(()=>{
+    if(!cu)return;
+    const allowed=allowedTabs.split(",").filter(Boolean);
+    if(allowed.length&&!allowed.includes(tab)&&tab!=="frete")setTab(allowed[0]);
+  },[cu,tab,allowedTabs]);
 
   // Helper cálculo preview
   const MPreview=({cost,price})=>{
@@ -1816,6 +1852,44 @@ export default function App(){
             </div>
             <Btn v="info" onClick={()=>setShowA(true)}><Ic n="analytics" s={14}/> Relatório Gerencial</Btn>
           </div>
+          {/* ══ ALERTAS INTELIGENTES ══ */}
+          {(()=>{
+            const hoje=new Date();
+            const l3=new Date();l3.setDate(l3.getDate()+3);
+            const l30=new Date();l30.setDate(l30.getDate()+30);
+            const venRec=(receivables||[]).filter(r=>!r.paid&&r.due_date&&new Date(r.due_date)<hoje);
+            const venPag=(payables||[]).filter(p=>!p.paid&&p.due_date&&new Date(p.due_date)<hoje);
+            const dueRec=(receivables||[]).filter(r=>!r.paid&&r.due_date&&new Date(r.due_date)>=hoje&&new Date(r.due_date)<=l3);
+            const duePag=(payables||[]).filter(p=>!p.paid&&p.due_date&&new Date(p.due_date)>=hoje&&new Date(p.due_date)<=l3);
+            const pag30=(payables||[]).filter(p=>!p.paid&&p.due_date&&new Date(p.due_date)<=l30).reduce((a,p)=>a+(parseFloat(p.value)||0),0)+(orders||[]).filter(o=>o.status==="pendente"||o.status==="parcial").reduce((a,o)=>a+(parseFloat(o.remaining_value)||0),0);
+            const recompras=(treatments||[]).filter(t=>t.status==="ativo"&&t.next_purchase&&new Date(t.next_purchase)<=l3);
+            const al=[];
+            if(venPag.length)al.push({c:"#f56565",i:"⚠️",t:venPag.length+" conta(s) a pagar VENCIDA(S) · "+fmt(venPag.reduce((a,p)=>a+p.value,0)),go:()=>{setTab("financeiro");setFinTab("pagar");}});
+            if(venRec.length)al.push({c:"#f56565",i:"⚠️",t:venRec.length+" recebível(is) em atraso · "+fmt(venRec.reduce((a,r)=>a+r.value,0)),go:()=>{setTab("financeiro");setFinTab("receber");}});
+            if(duePag.length)al.push({c:"#f59e0b",i:"⏰",t:duePag.length+" conta(s) a pagar vencem em ≤3 dias",go:()=>{setTab("financeiro");setFinTab("pagar");}});
+            if(dueRec.length)al.push({c:"#f59e0b",i:"⏰",t:dueRec.length+" recebível(is) vencem em ≤3 dias",go:()=>{setTab("financeiro");setFinTab("receber");}});
+            if(net<pag30)al.push({c:"#f56565",i:"💸",t:"Caixa ("+fmt(net)+") não cobre as contas dos próximos 30 dias ("+fmt(pag30)+")",go:()=>{setTab("financeiro");setFinTab("resumo");}});
+            if(cashIn>0&&margin<10)al.push({c:"#f59e0b",i:"📉",t:"Margem baixa: "+fmtPct(margin)+" — revise preços/custos",go:()=>{setTab("financeiro");setFinTab("saude");}});
+            if(zeroStk.length)al.push({c:"#f56565",i:"📦",t:zeroStk.length+" produto(s) zerado(s)",go:()=>{setTab("estoque");setEstTab("estoque");}});
+            else if(lowStk.length)al.push({c:"#f59e0b",i:"📦",t:lowStk.length+" produto(s) com estoque baixo",go:()=>{setTab("estoque");setEstTab("estoque");}});
+            if(recompras.length)al.push({c:"#8b44f0",i:"🔄",t:recompras.length+" recompra(s) de tratamento previstas",go:()=>setShowTreatments(true)});
+            if(!al.length)return(
+              <div style={{background:"linear-gradient(135deg,#10b98115,#10b98105)",border:"1px solid #10b98130",borderRadius:".75rem",padding:".7rem 1rem",marginBottom:".7rem",display:"flex",alignItems:"center",gap:".5rem"}}>
+                <span style={{fontSize:"1.1rem"}}>✅</span><span style={{fontSize:".82rem",fontWeight:600,color:"#10b981"}}>Tudo em dia — nenhum alerta no momento.</span>
+              </div>
+            );
+            return(
+              <div style={{marginBottom:".7rem",display:"flex",flexDirection:"column",gap:".4rem"}}>
+                {al.map((a,i)=>(
+                  <button key={i} onClick={a.go} style={{display:"flex",alignItems:"center",gap:".5rem",textAlign:"left",width:"100%",background:a.c+"12",border:"1px solid "+a.c+"35",borderRadius:".6rem",padding:".6rem .8rem",cursor:"pointer"}}>
+                    <span style={{fontSize:"1rem",flexShrink:0}}>{a.i}</span>
+                    <span style={{fontSize:".8rem",fontWeight:600,color:a.c,flex:1}}>{a.t}</span>
+                    <span style={{fontSize:".8rem",color:a.c,opacity:.7,flexShrink:0}}>→</span>
+                  </button>
+                ))}
+              </div>
+            );
+          })()}
           <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(130px,1fr))",gap:".6rem",marginBottom:".7rem"}}>
             <KCard label="Receita" value={fmt(cashIn)} color="#10b981" icon="up"/>
             <KCard label="Custos" value={fmt(cashOut)} color="#f56565" icon="dn"/>
@@ -1898,7 +1972,7 @@ export default function App(){
                   </div>
                   <div style={{display:"flex",gap:".5rem",alignItems:"center"}}>
                     {perdidos.length>0&&<span style={{fontSize:".65rem",color:"#f56565",background:"#f5656515",borderRadius:"99px",padding:".12rem .45rem",border:"1px solid #f5656530"}}>💀 {perdidos.length} perdido{perdidos.length>1?"s":""}</span>}
-                    <button onClick={()=>setTab("pedidos")} style={{fontSize:".65rem",color:"#f59e0b",background:"none",border:"none",cursor:"pointer",fontFamily:"'DM Sans',sans-serif",fontWeight:600}}>ver todos →</button>
+                    <button onClick={()=>{setTab("estoque");setEstTab("pedidos");}} style={{fontSize:".65rem",color:"#f59e0b",background:"none",border:"none",cursor:"pointer",fontFamily:"'DM Sans',sans-serif",fontWeight:600}}>ver todos →</button>
                   </div>
                 </div>
                 <div style={{display:"flex",gap:".4rem",flexWrap:"wrap"}}>
@@ -2070,7 +2144,15 @@ export default function App(){
         </>)}
 
         {/* ══ ESTOQUE ══ */}
-        {tab==="estoque"&&(<>
+        {/* ══════════ ESTOQUE — sub-navegação ══════════ */}
+        {tab==="estoque"&&(
+          <div style={{display:"flex",gap:".4rem",flexWrap:"wrap",marginBottom:"1rem",borderBottom:"1px solid var(--bdr)",paddingBottom:".75rem"}}>
+            {[{id:"estoque",l:"📦 Estoque"},{id:"produtos",l:"🏷️ Produtos"},{id:"pedidos",l:"🚚 Pedidos"}].map(g=>(
+              <button key={g.id} onClick={()=>setEstTab(g.id)} style={{padding:".42rem .85rem",borderRadius:".5rem",fontSize:".82rem",fontFamily:"'DM Sans',sans-serif",fontWeight:700,border:"none",cursor:"pointer",background:estTab===g.id?"linear-gradient(135deg,#4f5ef0,#8b44f0)":"var(--pill)",color:estTab===g.id?"#fff":"var(--navoff)",transition:"all .2s",whiteSpace:"nowrap"}}>{g.l}</button>
+            ))}
+          </div>
+        )}
+        {tab==="estoque"&&estTab==="estoque"&&(<>
           <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:".75rem",flexWrap:"wrap",gap:".5rem"}}>
             <h2 style={{fontFamily:"'Syne',sans-serif",fontWeight:800,fontSize:"1rem",color:"var(--tx)"}}>Estoque</h2>
             <div style={{display:"flex",gap:".4rem",flexWrap:"wrap",alignItems:"center"}}>
@@ -2163,13 +2245,14 @@ export default function App(){
           const saldoCaixa=net;
           const abertoRec=(receivables||[]).filter(r=>!r.paid);
           const abertoPag=(payables||[]).filter(p=>!p.paid);
+          const abertoPagAll=[...abertoPag,...orderPayables];
           const totalRec=abertoRec.reduce((a,r)=>a+(parseFloat(r.value)||0),0);
-          const totalPag=abertoPag.reduce((a,p)=>a+(parseFloat(p.value)||0),0);
+          const totalPag=abertoPagAll.reduce((a,p)=>a+(parseFloat(p.value)||0),0);
           const hoje=new Date();
           const venRec=abertoRec.filter(r=>r.due_date&&new Date(r.due_date)<hoje);
           const venPag=abertoPag.filter(p=>p.due_date&&new Date(p.due_date)<hoje);
           const projetado=saldoCaixa+totalRec-totalPag;
-          const proximos=[...abertoRec.map(r=>({...r,_t:"receber"})),...abertoPag.map(p=>({...p,_t:"pagar"}))].filter(x=>x.due_date).sort((a,b)=>new Date(a.due_date)-new Date(b.due_date)).slice(0,8);
+          const proximos=[...abertoRec.map(r=>({...r,_t:"receber"})),...abertoPagAll.map(p=>({...p,_t:"pagar"}))].filter(x=>x.due_date).sort((a,b)=>new Date(a.due_date)-new Date(b.due_date)).slice(0,8);
           return(
             <div style={{animation:"fadeUp .4s ease"}}>
               <h2 style={{fontFamily:"'Syne',sans-serif",fontWeight:800,fontSize:"1rem",color:"var(--tx)",marginBottom:".75rem"}}>📊 Resumo Financeiro</h2>
@@ -2180,7 +2263,7 @@ export default function App(){
               <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))",gap:".6rem",marginBottom:".75rem"}}>
                 <KCard label="Saldo em caixa" value={fmt(saldoCaixa)} color={saldoCaixa>=0?"#10b981":"#f56565"}/>
                 <KCard label="Total a receber" value={fmt(totalRec)} sub={fmtN(abertoRec.length)+" conta(s)"} color="#4f5ef0"/>
-                <KCard label="Total a pagar" value={fmt(totalPag)} sub={fmtN(abertoPag.length)+" conta(s)"} color="#f59e0b"/>
+                <KCard label="Total a pagar" value={fmt(totalPag)} sub={fmtN(abertoPagAll.length)+" conta(s)"} color="#f59e0b"/>
                 <KCard label="Vencidas" value={fmtN(venRec.length+venPag.length)} sub={"rec "+fmt(venRec.reduce((a,r)=>a+r.value,0))+" · pag "+fmt(venPag.reduce((a,p)=>a+p.value,0))} color="#f56565"/>
               </div>
               <div style={{background:"var(--card)",border:"1px solid var(--bdr)",borderRadius:".75rem",overflow:"hidden"}}>
@@ -2238,6 +2321,25 @@ export default function App(){
           score=Math.min(100,score);
           const scoreColor=score>=70?"#10b981":score>=40?"#f59e0b":"#f56565";
           const scoreLabel=score>=70?"Saudável":score>=40?"Requer atenção":"Crítico";
+          // Comparativo mês atual vs mês anterior (campo date = DD/MM/YYYY)
+          const _now=new Date();
+          const curMY=String(_now.getMonth()+1).padStart(2,"0")+"/"+_now.getFullYear();
+          const _prev=new Date(_now.getFullYear(),_now.getMonth()-1,1);
+          const prevMY=String(_prev.getMonth()+1).padStart(2,"0")+"/"+_prev.getFullYear();
+          const monthAgg=(my)=>{
+            const tx=(cashTx||[]).filter(t=>((t.date||"").split("/").slice(1).join("/"))===my);
+            const r=tx.filter(t=>t.type==="entrada").reduce((a,t)=>a+(parseFloat(t.value)||0),0);
+            const c=tx.filter(t=>t.type==="saida").reduce((a,t)=>a+(parseFloat(t.value)||0),0);
+            return{r,c,p:r-c,m:r>0?((r-c)/r)*100:0};
+          };
+          const mCur=monthAgg(curMY),mPrev=monthAgg(prevMY);
+          const delta=(a,b)=>b!==0?((a-b)/Math.abs(b))*100:(a>0?100:0);
+          const cmp=[
+            {l:"Receita",cur:mCur.r,prev:mPrev.r,money:true},
+            {l:"Custos",cur:mCur.c,prev:mPrev.c,money:true,inv:true},
+            {l:"Lucro",cur:mCur.p,prev:mPrev.p,money:true},
+            {l:"Margem",cur:mCur.m,prev:mPrev.m,money:false},
+          ];
           const dre=[
             {l:"(+) Receita bruta",v:cashIn,c:"#10b981"},
             {l:"(−) Custos e despesas",v:-cashOut,c:"#f56565"},
@@ -2282,6 +2384,24 @@ export default function App(){
                   </div>
                 </div>
                 <div style={{fontSize:".66rem",color:"var(--tx6)",marginTop:".5rem"}}>Custos fixos = contas a pagar recorrentes + aluguel/salário/serviço/imposto em aberto. Equilíbrio = custos fixos ÷ margem.</div>
+              </div>
+              {/* Comparativo mensal */}
+              <div style={{background:"var(--card)",border:"1px solid var(--bdr)",borderRadius:".75rem",padding:"1rem",marginBottom:".75rem"}}>
+                <div style={{fontFamily:"'Syne',sans-serif",fontWeight:700,fontSize:".82rem",color:"var(--tx2)",marginBottom:".65rem"}}>📈 Este mês vs mês anterior</div>
+                <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))",gap:".5rem"}}>
+                  {cmp.map(x=>{
+                    const d=delta(x.cur,x.prev);
+                    const good=x.inv?d<=0:d>=0;
+                    const arrow=d>0.5?"▲":d<-0.5?"▼":"▬";
+                    return(
+                      <div key={x.l} style={{background:"var(--sumbox)",borderRadius:".5rem",padding:".6rem",border:"1px solid var(--bdr)"}}>
+                        <div style={{fontSize:".62rem",color:"var(--sub)",textTransform:"uppercase",marginBottom:".15rem"}}>{x.l}</div>
+                        <div style={{fontSize:".95rem",fontWeight:700,color:"var(--tx)",fontFamily:"'Syne',sans-serif"}}>{x.money?fmt(x.cur):fmtPct(x.cur)}</div>
+                        <div style={{fontSize:".64rem",color:good?"#10b981":"#f56565",fontWeight:600,marginTop:".1rem"}}>{arrow} {Math.abs(d).toFixed(0)}% <span style={{color:"var(--tx6)"}}>vs {x.money?fmt(x.prev):fmtPct(x.prev)}</span></div>
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
               {/* DRE simplificado */}
               <div style={{background:"var(--card)",border:"1px solid var(--bdr)",borderRadius:".75rem",overflow:"hidden",marginBottom:".75rem"}}>
@@ -2339,7 +2459,7 @@ export default function App(){
               <XBtn rows={(payables||[]).map(p=>({Categoria:p.category||"—",Descrição:p.description,Fornecedor:p.supplier_name||"—",Valor:fmt(p.value),Vencimento:p.due_date||"—",Status:p.paid?"Pago":"Pendente"}))} name="contas-a-pagar-caixapro" sheet="A Pagar"/>
             </div>
             <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:".6rem",marginBottom:".75rem"}}>
-              <KCard label="Em aberto" value={fmtN((payables||[]).filter(p=>!p.paid).length)} sub={fmt((payables||[]).filter(p=>!p.paid).reduce((a,p)=>a+p.value,0))} color="#f59e0b"/>
+              <KCard label="Em aberto" value={fmtN((payables||[]).filter(p=>!p.paid).length+orderPayables.length)} sub={fmt((payables||[]).filter(p=>!p.paid).reduce((a,p)=>a+p.value,0)+orderPayables.reduce((a,o)=>a+o.value,0))} color="#f59e0b"/>
               <KCard label="Vencidas" value={fmtN((payables||[]).filter(p=>!p.paid&&p.due_date&&new Date(p.due_date)<new Date()).length)} sub={fmt((payables||[]).filter(p=>!p.paid&&p.due_date&&new Date(p.due_date)<new Date()).reduce((a,p)=>a+p.value,0))} color="#f56565"/>
               <KCard label="Pago total" value={fmt((payables||[]).filter(p=>p.paid).reduce((a,p)=>a+p.value,0))} color="#10b981"/>
             </div>
@@ -2392,7 +2512,22 @@ export default function App(){
               <Btn v="ok" onClick={addPayable}><Ic n="save" s={13}/>{payForm.installments>1?`Registrar ${payForm.installments} parcelas`:"Registrar conta a pagar"}</Btn>
             </div>}
             <div style={{background:"var(--card)",border:"1px solid var(--bdr)",borderRadius:".75rem",overflow:"hidden"}}>
-              {(payables||[]).length===0
+              {orderPayables.map(o=>(
+                <div key={o.id} style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:".72rem 1rem",borderBottom:"1px solid var(--sep)",background:"#0891b209"}}>
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{display:"flex",alignItems:"center",gap:".4rem",marginBottom:".15rem",flexWrap:"wrap"}}>
+                      <span style={{fontWeight:700,fontSize:".83rem",color:"var(--tx)"}}>{o.description}</span>
+                      <Badge color="#0891b2" sm>Pedido a fornecedor</Badge>
+                    </div>
+                    <div style={{fontSize:".67rem",color:"var(--tx5)"}}>Pagamento na chegada da mercadoria · gerido em Estoque ▸ Pedidos</div>
+                  </div>
+                  <div style={{display:"flex",alignItems:"center",gap:".55rem",flexShrink:0,marginLeft:".75rem"}}>
+                    <span style={{fontWeight:700,fontFamily:"'Syne',sans-serif",color:"#0891b2",fontSize:".9rem"}}>{fmt(o.value)}</span>
+                    <button onClick={()=>{setTab("estoque");setEstTab("pedidos");}} style={{background:"#0891b215",border:"1px solid #0891b230",borderRadius:".4rem",padding:".28rem .6rem",color:"#0891b2",fontSize:".72rem",fontFamily:"'DM Sans',sans-serif",fontWeight:600,cursor:"pointer"}}>Ver pedido →</button>
+                  </div>
+                </div>
+              ))}
+              {(payables||[]).length===0&&orderPayables.length===0
                 ?<p style={{color:"var(--tx5)",textAlign:"center",padding:"2.5rem 0",fontSize:".8rem"}}>Nenhuma conta a pagar registrada. Use o formulário acima.</p>
                 :(payables||[]).map(p=>{
                   const ov=!p.paid&&p.due_date&&new Date(p.due_date)<new Date();
@@ -2443,6 +2578,7 @@ export default function App(){
                       <div style={{display:"flex",justifyContent:"space-between"}}><span style={{color:"var(--tx5)"}}>Crédito à vista</span><span style={{fontWeight:600,color:"var(--tx2)"}}>{fmtPct(t.vista||0)}</span></div>
                       <div style={{display:"flex",justifyContent:"space-between"}}><span style={{color:"var(--tx5)"}}>Parcelado 2-6x</span><span style={{fontWeight:600,color:"var(--tx2)"}}>{fmtPct(t.parc2a6||0)}</span></div>
                       <div style={{display:"flex",justifyContent:"space-between"}}><span style={{color:"var(--tx5)"}}>Parcelado 7-12x</span><span style={{fontWeight:600,color:"var(--tx2)"}}>{fmtPct(t.parc7a12||0)}</span></div>
+                      {(cardTaxes.__opts||{}).antecip&&<div style={{display:"flex",justifyContent:"space-between",borderTop:"1px solid var(--sep)",paddingTop:".2rem",marginTop:".1rem"}}><span style={{color:"#8b44f0"}}>⚡ Antecipação</span><span style={{fontWeight:700,color:"#8b44f0"}}>+{fmtPct(t.antecip||0)}</span></div>}
                     </div>
                   </div>
                 );
@@ -2556,7 +2692,7 @@ export default function App(){
         </>)}
 
         {/* ══ PRODUTOS ══ */}
-        {tab==="produtos"&&(<>
+        {tab==="estoque"&&estTab==="produtos"&&(<>
           <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:".75rem",flexWrap:"wrap",gap:".5rem"}}>
             <h2 style={{fontFamily:"'Syne',sans-serif",fontWeight:800,fontSize:"1rem",color:"var(--tx)"}}>Produtos</h2>
             <div style={{display:"flex",gap:".4rem",flexWrap:"wrap",alignItems:"center"}}>
@@ -2613,6 +2749,31 @@ export default function App(){
                 {(freteConfig.maxFee||0)>0&&<span style={{color:"#10b981"}}>· máx. R$ {freteConfig.maxFee}</span>}
               </div>
               <span style={{fontSize:".7rem",color:"var(--tx5)"}}>Ex: 10km → {fmt((parseFloat(freteConfig.base)||0)+(10*(parseFloat(freteConfig.ratePerKm)||0)))}</span>
+            </div>
+
+            {/* Zonas de entrega (taxa fixa) */}
+            <div style={{background:"var(--card)",border:"1px solid var(--bdr)",borderRadius:".75rem",padding:".85rem 1rem",marginBottom:".85rem"}}>
+              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:".55rem",flexWrap:"wrap",gap:".4rem"}}>
+                <div style={{fontFamily:"'Syne',sans-serif",fontWeight:700,fontSize:".8rem",color:"var(--tx2)"}}>🗺️ Zonas de entrega (taxa fixa)</div>
+                <span style={{fontSize:".66rem",color:"var(--tx5)"}}>Valor fixo por bairro/região — alternativa ao cálculo por km</span>
+              </div>
+              {(freteConfig.zonas||[]).length>0
+                ?<div style={{display:"flex",gap:".4rem",flexWrap:"wrap",marginBottom:canEdit?".65rem":0}}>
+                    {(freteConfig.zonas||[]).map(z=>(
+                      <div key={z.id} style={{display:"flex",alignItems:"center",gap:".4rem",background:"#10b98112",border:"1px solid #10b98130",borderRadius:".5rem",padding:".3rem .6rem"}}>
+                        <span style={{fontSize:".76rem",fontWeight:600,color:"var(--tx2)"}}>{z.name}</span>
+                        <span style={{fontSize:".78rem",fontWeight:700,color:"#10b981",fontFamily:"'Syne',sans-serif"}}>{fmt(z.fee)}</span>
+                        {canEdit&&<button onClick={()=>delZona(z.id)} style={{background:"none",border:"none",color:"var(--tx6)",padding:0,cursor:"pointer",display:"flex"}}><Ic n="trash" s={12}/></button>}
+                      </div>
+                    ))}
+                  </div>
+                :<p style={{fontSize:".72rem",color:"var(--tx5)",marginBottom:canEdit?".65rem":0}}>Nenhuma zona cadastrada. {canEdit?"Adicione abaixo (ex: Centro · R$ 8).":""}</p>
+              }
+              {canEdit&&<div style={{display:"flex",gap:".4rem",flexWrap:"wrap"}}>
+                <input value={zonaForm.name} onChange={e=>setZonaForm(f=>({...f,name:e.target.value}))} placeholder="Bairro / região" style={{...IS,flex:1,minWidth:140,fontSize:".82rem"}}/>
+                <input type="number" min="0" step="0.01" value={zonaForm.fee} onChange={e=>setZonaForm(f=>({...f,fee:e.target.value}))} onKeyDown={e=>e.key==="Enter"&&addZona()} placeholder="R$" style={{...IS,width:90,fontSize:".82rem"}}/>
+                <Btn sm v="ok" onClick={addZona}><Ic n="plus" s={12}/>Adicionar</Btn>
+              </div>}
             </div>
 
             {/* Origens configuradas */}
@@ -2716,7 +2877,7 @@ export default function App(){
         )}
 
         {/* ══ PEDIDOS ══ */}
-        {tab==="pedidos"&&(
+        {tab==="estoque"&&estTab==="pedidos"&&(
           <div style={{animation:"fadeUp .4s ease"}}>
             <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:".75rem",flexWrap:"wrap",gap:".5rem"}}>
               <h2 style={{fontFamily:"'Syne',sans-serif",fontWeight:800,fontSize:"1rem",color:"var(--tx)"}}>📦 Pedidos de Compra</h2>
@@ -3001,6 +3162,26 @@ export default function App(){
                         ))}
                       </tbody>
                     </table>
+                  </div>
+                  <div style={{background:"var(--pill)",border:"1px solid var(--bdr)",borderRadius:".55rem",padding:".7rem .85rem",marginBottom:"1rem"}}>
+                    <label style={{display:"flex",alignItems:"center",gap:".5rem",cursor:"pointer",marginBottom:lt.__opts?.antecip?".6rem":0}}>
+                      <input type="checkbox" checked={!!lt.__opts?.antecip} onChange={e=>setLt(t=>({...t,__opts:{...(t.__opts||{}),antecip:e.target.checked}}))} style={{width:18,height:18,accentColor:"#8b44f0"}}/>
+                      <span style={{fontWeight:700,fontSize:".82rem",color:lt.__opts?.antecip?"#8b44f0":"var(--tx3)"}}>⚡ Habilitar taxa de antecipação (recebimento na hora)</span>
+                    </label>
+                    {lt.__opts?.antecip&&<div>
+                      <div style={{fontSize:".68rem",color:"var(--tx5)",marginBottom:".5rem"}}>% adicional somado às vendas no crédito (à vista e parcelado). Débito não é afetado.</div>
+                      <div style={{display:"flex",gap:".5rem",flexWrap:"wrap"}}>
+                        {CARD_BRANDS.map(brand=>(
+                          <div key={brand} style={{display:"flex",flexDirection:"column",alignItems:"center"}}>
+                            <span style={{fontSize:".62rem",color:"var(--sub)",marginBottom:".15rem"}}>{brand}</span>
+                            <div style={{display:"flex",alignItems:"center",gap:".15rem"}}>
+                              <input type="number" min="0" max="20" step="0.01" value={lt[brand]?.antecip||""} onChange={e=>setLt(t=>({...t,[brand]:{...t[brand],antecip:e.target.value}}))} style={{...IS,textAlign:"center",width:64,fontSize:".78rem"}}/>
+                              <span style={{fontSize:".68rem",color:"var(--tx5)"}}>%</span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>}
                   </div>
                   <div style={{display:"flex",gap:".5rem",justifyContent:"flex-end"}}>
                     <Btn v="ghost" onClick={()=>setLt(JSON.parse(JSON.stringify(DEFAULT_TAXES)))}>↩ Padrões</Btn>
@@ -3856,6 +4037,22 @@ export default function App(){
       <div style={{background:"var(--pill)",borderRadius:".45rem",padding:".5rem .8rem",marginBottom:".8rem",fontSize:".73rem",color:"var(--tx5)"}}>Login: <b style={{color:"var(--tx4)"}}>@{editing.username}</b></div>
       <R2><Inp label="Nome *" value={editing.display_name} onChange={e=>setEditing(v=>({...v,display_name:e.target.value}))}/><Sel label="Nível" value={editing.role} onChange={e=>setEditing(v=>({...v,role:e.target.value}))} disabled={editing.id===cu.id}><option value="admin">Administrador</option><option value="operator">Operador</option><option value="viewer">Visualizador</option></Sel></R2>
       <Field label="Status"><div style={{display:"flex",gap:".5rem"}}>{[{v:true,l:"✅ Ativo"},{v:false,l:"🚫 Inativo"}].map(o=><button key={String(o.v)} onClick={()=>setEditing(v=>({...v,active:o.v}))} disabled={editing.id===cu.id} style={{flex:1,padding:".5rem",borderRadius:".45rem",border:`1px solid ${editing.active===o.v?"#4f5ef0":"var(--bdr2)"}`,background:editing.active===o.v?"#4f5ef020":"transparent",color:editing.active===o.v?"#4f5ef0":"var(--tx5)",fontFamily:"'DM Sans',sans-serif",fontWeight:600,fontSize:".82rem"}}>{o.l}</button>)}</div></Field>
+      {editing.role!=="admin"&&<div style={{borderTop:"1px solid var(--bdr)",paddingTop:".8rem",marginBottom:".8rem"}}>
+        <div style={{fontSize:".72rem",color:"#8b44f0",marginBottom:".6rem",display:"flex",gap:".3rem",alignItems:"center",fontWeight:700}}><Ic n="key" s={12}/>Permissões de acesso (telas que este usuário pode abrir)</div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr",gap:".4rem"}}>
+          {PERM_MODULES.map(mod=>{
+            const perms=editing.permissions||{};
+            const on=perms[mod.id]!==false;
+            return(
+              <label key={mod.id} style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:".5rem",cursor:"pointer",background:on?"#8b44f012":"var(--pill)",border:`1px solid ${on?"#8b44f040":"var(--bdr2)"}`,borderRadius:".5rem",padding:".5rem .75rem"}}>
+                <span style={{fontSize:".8rem",fontWeight:600,color:on?"var(--tx2)":"var(--tx5)"}}>{mod.l}</span>
+                <input type="checkbox" checked={on} onChange={e=>setEditing(v=>({...v,permissions:{...(v.permissions||{}),[mod.id]:e.target.checked}}))} style={{width:18,height:18,accentColor:"#8b44f0",flexShrink:0}}/>
+              </label>
+            );
+          })}
+        </div>
+        <div style={{fontSize:".66rem",color:"var(--tx6)",marginTop:".5rem"}}>Config fica sempre exclusivo de administradores. Desmarque para ocultar a tela do menu deste usuário.</div>
+      </div>}
       <div style={{borderTop:"1px solid var(--bdr)",paddingTop:".8rem",marginBottom:".8rem"}}>
         <div style={{fontSize:".7rem",color:"#4f5ef0",marginBottom:".6rem",display:"flex",gap:".3rem",alignItems:"center"}}><Ic n="key" s={12}/>Nova senha (vazio = manter atual)</div>
         <R2>
@@ -4066,6 +4263,26 @@ export default function App(){
           </div>
           <div style={{background:"var(--pill)",borderRadius:".5rem",padding:".65rem .85rem",marginBottom:"1rem",fontSize:".73rem",color:"var(--tx4)"}}>
             💡 Exemplo: Venda R$ 100 com Visa Débito a 1.99% → taxa R$ 1,99 → líquido R$ 98,01
+          </div>
+          <div style={{background:"var(--pill)",border:"1px solid var(--bdr)",borderRadius:".5rem",padding:".7rem .85rem",marginBottom:"1rem"}}>
+            <label style={{display:"flex",alignItems:"center",gap:".5rem",cursor:"pointer",marginBottom:localTaxes.__opts?.antecip?".6rem":0}}>
+              <input type="checkbox" checked={!!localTaxes.__opts?.antecip} onChange={e=>setLocalTaxes(t=>({...t,__opts:{...(t.__opts||{}),antecip:e.target.checked}}))} style={{width:18,height:18,accentColor:"#8b44f0"}}/>
+              <span style={{fontWeight:700,fontSize:".82rem",color:localTaxes.__opts?.antecip?"#8b44f0":"var(--tx3)"}}>⚡ Habilitar taxa de antecipação (recebimento na hora)</span>
+            </label>
+            {localTaxes.__opts?.antecip&&<div>
+              <div style={{fontSize:".68rem",color:"var(--tx5)",marginBottom:".5rem"}}>% adicional somado às vendas no crédito (à vista e parcelado). Débito não é afetado.</div>
+              <div style={{display:"flex",gap:".5rem",flexWrap:"wrap"}}>
+                {CARD_BRANDS.map(brand=>(
+                  <div key={brand} style={{display:"flex",flexDirection:"column",alignItems:"center"}}>
+                    <span style={{fontSize:".62rem",color:"var(--sub)",marginBottom:".15rem"}}>{brand}</span>
+                    <div style={{display:"flex",alignItems:"center",gap:".15rem"}}>
+                      <input type="number" min="0" max="20" step="0.01" value={localTaxes[brand]?.antecip||""} onChange={e=>setLocalTaxes(t=>({...t,[brand]:{...t[brand],antecip:e.target.value}}))} style={{...IS,textAlign:"center",width:64,fontSize:".78rem"}}/>
+                      <span style={{fontSize:".68rem",color:"var(--tx5)"}}>%</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>}
           </div>
           <div style={{display:"flex",gap:".5rem",justifyContent:"space-between"}}>
             <Btn v="ghost" onClick={()=>setLocalTaxes(JSON.parse(JSON.stringify(DEFAULT_TAXES)))}> Restaurar padrões</Btn>

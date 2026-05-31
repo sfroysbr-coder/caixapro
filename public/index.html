@@ -12,13 +12,18 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
 
+  <!-- Fontes (legibilidade e consistência em Android/iOS/Windows) -->
+  <link rel="preconnect" href="https://fonts.googleapis.com"/>
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Syne:wght@600;700;800&display=swap" rel="stylesheet"/>
+
   <style>
     :root {
       --bg:#080a14;--bg2:#0b0d1a;--bg3:#0d0f1a;--bg4:#12141f;
       --card:#0d0f1a;--inp:#12141f;--pill:#080a14;
       --bdr:#1e2130;--bdr2:#252840;--sep:#151728;
-      --tx:#e8eaf6;--tx2:#c4c8e8;--tx3:#8b8fa8;
-      --tx4:#666a88;--tx5:#44475a;--tx6:#333550;--sub:#555870;
+      --tx:#eef0fb;--tx2:#ccd0ec;--tx3:#a0a4c2;
+      --tx4:#7a7fa0;--tx5:#5a5d78;--tx6:#3d3f5c;--sub:#6a6e90;
       --navon:#4f5ef0;--navoff:#666a88;
       --shadow:rgba(0,0,0,.6);
       --login-bg:linear-gradient(160deg,#0e1020,#090b16);
@@ -29,8 +34,8 @@
       --bg:#f0f4ff;--bg2:#ffffff;--bg3:#ffffff;--bg4:#f5f7ff;
       --card:#ffffff;--inp:#f0f4ff;--pill:#eef1ff;
       --bdr:#dde1f5;--bdr2:#c8ceee;--sep:#e8ecf8;
-      --tx:#1a1d3a;--tx2:#2d3060;--tx3:#555880;
-      --tx4:#6668a0;--tx5:#8890b0;--tx6:#aab0cc;--sub:#7780aa;
+      --tx:#15183a;--tx2:#262a5a;--tx3:#4a4d78;
+      --tx4:#5a5d92;--tx5:#777ca0;--tx6:#9aa0c0;--sub:#666a96;
       --navon:#4f5ef0;--navoff:#7780aa;
       --shadow:rgba(60,80,200,.12);
       --login-bg:#ffffff;
@@ -39,14 +44,16 @@
     }
     *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
     *{-webkit-tap-highlight-color:transparent;touch-action:manipulation}
-    body{background:var(--bg);color:var(--tx);-webkit-text-size-adjust:100%;touch-action:manipulation;font-family:'DM Sans',sans-serif;min-height:100vh;transition:background .3s,color .3s;overflow-x:hidden}
+    html{font-size:16.5px;scroll-behavior:smooth;-webkit-text-size-adjust:100%;text-size-adjust:100%}
+    body{background:var(--bg);color:var(--tx);-webkit-text-size-adjust:100%;touch-action:manipulation;font-family:'DM Sans',system-ui,-apple-system,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;font-weight:450;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;text-rendering:optimizeLegibility;font-synthesis:none;min-height:100vh;transition:background .3s,color .3s;overflow-x:hidden}
     ::-webkit-scrollbar{width:4px;height:4px}
     ::-webkit-scrollbar-thumb{background:var(--bdr2);border-radius:2px}
     input::placeholder{color:var(--tx5)}
     input,select,textarea{-webkit-user-select:text;user-select:text}
     input:focus,select:focus{outline:2px solid #4f5ef0;outline-offset:-1px}
-    button{cursor:pointer;transition:opacity .15s}
-    button:hover:not(:disabled){opacity:.85}
+    button{cursor:pointer;transition:opacity .15s,transform .1s,box-shadow .2s;font-family:inherit}
+    button:hover:not(:disabled){opacity:.9}
+    button:active:not(:disabled){transform:translateY(1px)}
     /* Responsividade global */
     img{max-width:100%;height:auto}
     table{width:100%;border-collapse:collapse}
@@ -57,10 +64,10 @@
     }
     /* Mobile portrait */
     @media(max-width:480px){
-      input,select{font-size:16px!important} /* evita zoom no iOS */
+      input,select,textarea{font-size:16px!important} /* evita zoom no iOS */
     }
-    /* Scroll suave */
-    html{scroll-behavior:smooth}
+    /* Telas grandes: não exagerar no tamanho base */
+    @media(min-width:1100px){ html{font-size:17px} }
   </style>
   <script>
     try{if(localStorage.getItem('cpro:theme')==='light')document.body.classList.add('light')}catch(e){}
