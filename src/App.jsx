@@ -3258,7 +3258,6 @@ export default function App(){
             </div>
           </div>
         )}
-        )}
         {/* ── PAGAMENTO DIVIDIDO (split) ── */}
         <div style={{background:cartSplitEnabled?"#8b44f010":"var(--pill)",border:`1px solid ${cartSplitEnabled?"#8b44f040":"var(--bdr)"}`,borderRadius:".55rem",padding:".7rem .85rem",marginBottom:".5rem"}}>
           <label style={{display:"flex",alignItems:"center",gap:".5rem",cursor:"pointer",fontSize:".82rem",fontWeight:600,color:cartSplitEnabled?"#8b44f0":"var(--tx3)"}}>
