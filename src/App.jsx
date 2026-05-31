@@ -736,6 +736,13 @@ export default function App(){
   const[cartFreight,setCartFreight]=useState("");
   const[cartDelivery,setCartDelivery]=useState(false);   // flag entregador solicitado
   const[cartDeliveryCost,setCartDeliveryCost]=useState(""); // custo pago ao entregador
+  // PAGAMENTO DIVIDIDO (split) — mais de uma forma de pagamento na mesma venda
+  const newSplit=()=>({key:uid(),method:"PIX",amount:"",brand:"Visa",parcelas:2});
+  const[cartSplitEnabled,setCartSplitEnabled]=useState(false);
+  const[cartSplits,setCartSplits]=useState([]);
+  const updateSplit=(key,patch)=>setCartSplits(arr=>arr.map(s=>s.key===key?{...s,...patch}:s));
+  const removeSplit=(key)=>setCartSplits(arr=>arr.filter(s=>s.key!==key));
+  const addSplit=()=>setCartSplits(arr=>[...arr,newSplit()]);
   // legado (para editSale)
   const FS={product_id:"",product_name:"",client_id:"",client_name:"",quantity:"1",unit_price:"",total_price:"",notes:"",payment_method:"PIX"};
   const FC={name:"",email:"",phone:"",notes:""};
@@ -852,13 +859,17 @@ export default function App(){
   };
   const cartAddLine=()=>setCartItems(items=>[...items,newCartItem()]);
   const cartRemoveLine=key=>setCartItems(items=>items.length>1?items.filter(i=>i.key!==key):items);
-  const cartReset=()=>{setCartItems([newCartItem()]);setCartClient({id:"",name:""});setCartIsDirect(false);setCartSupplierName("");setCartPayment("PIX");setCartNotes("");setCartFreight("");setCartDelivery(false);setCartDeliveryCost("");setCartDiscount("");setCartDiscountType("fixed");setCartParcelas(2);setCartCardBrand("Visa");};
+  const cartReset=()=>{setCartItems([newCartItem()]);setCartClient({id:"",name:""});setCartIsDirect(false);setCartSupplierName("");setCartPayment("PIX");setCartNotes("");setCartFreight("");setCartDelivery(false);setCartDeliveryCost("");setCartDiscount("");setCartDiscountType("fixed");setCartParcelas(2);setCartCardBrand("Visa");setCartSplitEnabled(false);setCartSplits([]);};
 
   const cartSubtotal=cartItems.reduce((a,i)=>a+i.unit_price*i.quantity,0);
   const cartFreightVal=parseFloat(cartFreight)||0;
   const cartDeliveryCostVal=cartDelivery?(parseFloat(cartDeliveryCost)||0):0;
   const cartDiscountVal=cartDiscountType==="percent"?cartSubtotal*(parseFloat(cartDiscount)||0)/100:(parseFloat(cartDiscount)||0);
   const cartTotal=Math.max(0,cartSubtotal-cartDiscountVal)+cartFreightVal;
+  // Soma e validação do pagamento dividido
+  const cartSplitSum=Math.round(cartSplits.reduce((a,s)=>a+(parseFloat(s.amount)||0),0)*100)/100;
+  const cartSplitRemaining=Math.round((cartTotal-cartSplitSum)*100)/100;
+  const cartSplitValid=cartSplitEnabled?(cartSplits.length>0&&cartSplits.every(s=>s.method&&(parseFloat(s.amount)||0)>0)&&Math.abs(cartSplitRemaining)<0.01):true;
 
   // CRUD
   const registerSale=async()=>{
@@ -884,6 +895,18 @@ export default function App(){
     const grandTotal=Math.max(0,subtotal-discount)+freight;
     const desc=validItems.map(i=>`${i.product_name}(${i.quantity})`).join(", ");
 
+    // Validação do pagamento dividido
+    let splitMethodLabel=null;
+    if(cartSplitEnabled){
+      const activeSplits=cartSplits.filter(s=>(parseFloat(s.amount)||0)>0);
+      if(activeSplits.length===0){toast$("Adicione ao menos uma forma de pagamento com valor.","#f56565");return;}
+      const sum=Math.round(cartSplits.reduce((a,s)=>a+(parseFloat(s.amount)||0),0)*100)/100;
+      if(Math.abs(Math.round((grandTotal-sum)*100)/100)>=0.01){
+        toast$("A soma dos pagamentos ("+fmt(sum)+") deve ser igual ao total ("+fmt(grandTotal)+").","#f56565");return;
+      }
+      splitMethodLabel="Dividido: "+activeSplits.map(s=>{const c=["Débito","Crédito à Vista","Crédito Parcelado"].includes(s.method);return c?(s.method==="Crédito Parcelado"?"Crédito "+(parseInt(s.parcelas)||2)+"x":s.method):s.method;}).join(" + ");
+    }
+
     try{
       // 1. Inserir cada item como registro de venda
       const saleRecords=validItems.map(i=>({
@@ -896,7 +919,7 @@ export default function App(){
         unit_price:i.unit_price,
         total_price:i.unit_price*i.quantity,
         notes:cartNotes||null,
-        payment_method:cartPayment,
+        payment_method:cartSplitEnabled?splitMethodLabel:cartPayment,
         added_by:cu.display_name,
         date:today(),
         // batch_id para agrupar itens da mesma venda
@@ -930,7 +953,35 @@ export default function App(){
 
       // 3a. Para parcelado: NÃO lança no caixa agora (será lançado ao marcar parcelas pagas)
       //     Para débito/crédito à vista: lança entrada líquida + saída da taxa
-      if(cartPayment==="Crédito Parcelado"&&grandTotal>0){
+      if(cartSplitEnabled&&grandTotal>0){
+        // PAGAMENTO DIVIDIDO: processa cada forma de pagamento separadamente
+        for(const sp of cartSplits){
+          const amt=parseFloat(sp.amount)||0;
+          if(amt<=0)continue;
+          const spIsCard=["Débito","Crédito à Vista","Crédito Parcelado"].includes(sp.method);
+          const spMode=sp.method==="Débito"?"debito":sp.method==="Crédito à Vista"?"vista":((parseInt(sp.parcelas)||2)<=6?"parc2a6":"parc7a12");
+          const spTaxRate=spIsCard?getCardTaxRate(sp.brand,spMode):0;
+          const spTax=Math.round(amt*(spTaxRate/100)*100)/100;
+          const spNet=Math.round((amt-spTax)*100)/100;
+          const spLabel=spIsCard?(sp.method==="Crédito Parcelado"?sp.method+" "+(parseInt(sp.parcelas)||2)+"x · "+sp.brand:sp.method+" · "+sp.brand):sp.method;
+          if(sp.method==="Crédito Parcelado"){
+            // Parte parcelada → cria parcelas em A Receber (valor líquido)
+            const nP=parseInt(sp.parcelas)||2;
+            const pNet=Math.round((spNet/nP)*100)/100;
+            const recIns=[];
+            for(let p=0;p<nP;p++){
+              const dd=new Date();dd.setMonth(dd.getMonth()+p+1);
+              recIns.push({id:uid(),client_id:clientId,client_name:clientName,description:"Parcela "+(p+1)+"/"+nP+" · "+sp.brand+" · "+desc,value:pNet,due_date:dd.toISOString().slice(0,10),paid:false,sale_id:batchId,added_by:cu.display_name,created_at:nowISO()});
+            }
+            await supabase.from("receivables").insert(recIns);
+          } else {
+            // PIX / Dinheiro / Transferência / Débito / Crédito à Vista → entra no caixa
+            if(spNet>0)cashInserts.push({id:uid(),description:"Venda"+(clientName?" · "+clientName:"")+" · "+spLabel+" · "+desc,value:spNet,type:"entrada",category:"Venda",sale_id:batchId,product_name:validItems.map(i=>i.product_name).join(", "),added_by:cu.display_name,date:today()});
+            if(spIsCard&&spTax>0)cashInserts.push({id:uid(),description:"Taxa "+spLabel+(clientName?" · "+clientName:""),value:spTax,type:"saida",category:"Taxa Cartão",sale_id:batchId,product_name:null,added_by:cu.display_name,date:today()});
+          }
+        }
+        await loadReceivables();
+      } else if(cartPayment==="Crédito Parcelado"&&grandTotal>0){
         // Cria recebíveis com valor líquido por parcela
         const nParcelas=parseInt(cartParcelas)||2;
         const parcelaNet=Math.round((netTotal/nParcelas)*100)/100;
@@ -1056,7 +1107,10 @@ export default function App(){
       const paidCount=paidItems.length;
       const deliveryInfo=cartDelivery&&cartDeliveryCostVal>0?" · 🛵 Entregador: "+fmt(cartDeliveryCostVal):"";
 
-      if(cartPayment!=="Crédito Parcelado"){
+      if(cartSplitEnabled){
+        const nForms=cartSplits.filter(s=>(parseFloat(s.amount)||0)>0).length;
+        toast$("✅ Venda registrada! Pagamento dividido em "+nForms+" forma"+(nForms>1?"s":"")+" · Total: "+fmt(grandTotal)+deliveryInfo);
+      } else if(cartPayment!=="Crédito Parcelado"){
         const msg=freeCount>0
           ?"✅ Venda registrada! "+paidCount+" pago(s) · "+freeCount+" cortesia · Total: "+fmt(grandTotal)+deliveryInfo
           :"✅ Venda registrada! "+validItems.length+" produto(s) · Total: "+fmt(grandTotal)+deliveryInfo;
@@ -1942,7 +1996,7 @@ export default function App(){
                     <Badge color="#8b44f0" sm>{s.quantity} un</Badge>
                     {s.unit_price===0&&<Badge color="#f59e0b" sm>Cortesia</Badge>}
                     {s.batch_id&&<Badge color="#44475a" sm>Lote</Badge>}
-                    <Badge color={s.payment_method==="Crédito Parcelado"?"#8b44f0":s.payment_method==="Débito"?"#0891b2":s.payment_method==="PIX"?"#10b981":s.payment_method==="Dinheiro"?"#f59e0b":"#0891b2"} sm>{s.payment_method}</Badge>
+                    <Badge color={(s.payment_method||"").startsWith("Dividido")?"#8b44f0":s.payment_method==="Crédito Parcelado"?"#8b44f0":s.payment_method==="Débito"?"#0891b2":s.payment_method==="PIX"?"#10b981":s.payment_method==="Dinheiro"?"#f59e0b":"#0891b2"} sm>{s.payment_method}</Badge>
                     {(parseFloat(s.discount)||0)>0&&sales.filter(x=>x.batch_id===s.batch_id)[0]?.id===s.id&&<Badge color="#4f5ef0" sm>🏷️ -{fmt(parseFloat(s.discount)||0)}</Badge>}
                   </div>
                   <div style={{fontSize:".67rem",color:"var(--tx5)"}}>{s.date}{s.client_name&&` · 👤 ${s.client_name}`}{s.notes&&` · ${s.notes}`}</div>
@@ -3142,6 +3196,7 @@ export default function App(){
                 </div>
               )}
             </div>
+            {!cartSplitEnabled&&(
             <select value={cartPayment} onChange={e=>setCartPayment(e.target.value)} style={IS}>
               <optgroup label="Sem taxa">
                 {activeSimplePays.map(m=><option key={m} value={m}>{m}</option>)}
@@ -3152,9 +3207,15 @@ export default function App(){
                 <option value="Crédito Parcelado">Crédito Parcelado</option>
               </optgroup>
             </select>
+            )}
+            {cartSplitEnabled&&(
+              <div style={{marginTop:".6rem",padding:".55rem .7rem",background:"#8b44f015",border:"1px solid #8b44f040",borderRadius:".5rem",fontSize:".74rem",color:"#8b44f0",fontWeight:600,display:"flex",alignItems:"center",gap:".35rem"}}>
+                💳 Pagamento dividido ativo — defina as formas abaixo
+              </div>
+            )}
           </div>
         </R2>
-        {cartIsCard&&(
+        {!cartSplitEnabled&&cartIsCard&&(
           <div style={{background:"var(--pill)",borderRadius:".5rem",padding:".65rem .85rem",marginBottom:".5rem"}}>
             <div style={{fontSize:".68rem",color:"var(--sub)",textTransform:"uppercase",letterSpacing:".05em",marginBottom:".45rem",fontWeight:700}}>💳 Bandeira</div>
             <div style={{display:"flex",gap:".35rem",flexWrap:"wrap",marginBottom:cartTaxRate>0?".55rem":0}}>
@@ -3176,7 +3237,7 @@ export default function App(){
             )}
           </div>
         )}
-        {cartPayment==="Crédito Parcelado"&&(
+        {!cartSplitEnabled&&cartPayment==="Crédito Parcelado"&&(
           <div style={{background:"#4f5ef015",border:"1px solid #4f5ef040",borderRadius:".5rem",padding:".65rem .85rem",marginBottom:".5rem"}}>
             <div style={{fontSize:".68rem",color:"#4f5ef0",textTransform:"uppercase",letterSpacing:".05em",marginBottom:".45rem",fontWeight:700}}>Número de Parcelas</div>
             <div style={{display:"flex",gap:".3rem",flexWrap:"wrap",marginBottom:".45rem"}}>
@@ -3198,6 +3259,67 @@ export default function App(){
           </div>
         )}
         )}
+        {/* ── PAGAMENTO DIVIDIDO (split) ── */}
+        <div style={{background:cartSplitEnabled?"#8b44f010":"var(--pill)",border:`1px solid ${cartSplitEnabled?"#8b44f040":"var(--bdr)"}`,borderRadius:".55rem",padding:".7rem .85rem",marginBottom:".5rem"}}>
+          <label style={{display:"flex",alignItems:"center",gap:".5rem",cursor:"pointer",fontSize:".82rem",fontWeight:600,color:cartSplitEnabled?"#8b44f0":"var(--tx3)"}}>
+            <input type="checkbox" checked={cartSplitEnabled} onChange={e=>{const on=e.target.checked;setCartSplitEnabled(on);if(on&&cartSplits.length===0){const m0=activeSimplePays[0]||"PIX";const m1=activeSimplePays[1]||m0;setCartSplits([{key:uid(),method:m0,amount:"",brand:"Visa",parcelas:2},{key:uid(),method:m1,amount:"",brand:"Visa",parcelas:2}]);}}} style={{width:16,height:16,accentColor:"#8b44f0"}}/>
+            💳 Dividir em mais de uma forma de pagamento
+          </label>
+          {cartSplitEnabled&&(
+            <div style={{marginTop:".7rem"}}>
+              <div style={{fontSize:".66rem",color:"var(--sub)",marginBottom:".55rem"}}>Combine quantas formas quiser, em qualquer valor (ex: parte no PIX, parte no cartão, parte em dinheiro). A soma deve ser igual ao total da venda.</div>
+              {cartSplits.map((sp)=>{
+                const spIsCard=["Débito","Crédito à Vista","Crédito Parcelado"].includes(sp.method);
+                return (
+                <div key={sp.key} style={{background:"var(--card)",border:"1px solid var(--bdr2)",borderRadius:".5rem",padding:".55rem .6rem",marginBottom:".5rem"}}>
+                  <div style={{display:"grid",gridTemplateColumns:"1fr 108px 30px",gap:".4rem",alignItems:"center"}}>
+                    <select value={sp.method} onChange={e=>updateSplit(sp.key,{method:e.target.value})} style={{...IS,fontSize:".8rem"}}>
+                      <optgroup label="Sem taxa">{activeSimplePays.map(m=><option key={m} value={m}>{m}</option>)}</optgroup>
+                      <optgroup label="Cartão"><option value="Débito">Débito</option><option value="Crédito à Vista">Crédito à Vista</option><option value="Crédito Parcelado">Crédito Parcelado</option></optgroup>
+                    </select>
+                    <input type="number" min="0" step="0.01" onFocus={e=>e.target.select()} value={sp.amount} onChange={e=>updateSplit(sp.key,{amount:e.target.value})} placeholder="R$ 0,00" style={{...IS,fontSize:".82rem",textAlign:"right"}}/>
+                    <button onClick={()=>removeSplit(sp.key)} disabled={cartSplits.length<=1} title="Remover forma" style={{background:"none",border:"none",color:cartSplits.length<=1?"var(--tx6)":"#f56565",cursor:cartSplits.length<=1?"default":"pointer",padding:".2rem",display:"flex",alignItems:"center",justifyContent:"center"}}><Ic n="trash" s={14}/></button>
+                  </div>
+                  {spIsCard&&(
+                    <div style={{display:"flex",gap:".3rem",flexWrap:"wrap",marginTop:".45rem"}}>
+                      {CARD_BRANDS.map(b=>(
+                        <button key={b} onClick={()=>updateSplit(sp.key,{brand:b})} style={{padding:".22rem .55rem",borderRadius:".35rem",fontSize:".68rem",fontFamily:"'DM Sans',sans-serif",fontWeight:600,border:"1px solid "+(sp.brand===b?"#8b44f0":"var(--bdr2)"),background:sp.brand===b?"#8b44f0":"transparent",color:sp.brand===b?"#fff":"var(--navoff)"}}>{b}</button>
+                      ))}
+                    </div>
+                  )}
+                  {sp.method==="Crédito Parcelado"&&(
+                    <div style={{display:"flex",gap:".25rem",flexWrap:"wrap",marginTop:".4rem",alignItems:"center"}}>
+                      <span style={{fontSize:".66rem",color:"var(--sub)",marginRight:".2rem"}}>Parcelas:</span>
+                      {[2,3,4,5,6,7,8,9,10,11,12].map(n=>(
+                        <button key={n} onClick={()=>updateSplit(sp.key,{parcelas:n})} style={{padding:".2rem .45rem",borderRadius:".3rem",fontSize:".68rem",fontFamily:"'DM Sans',sans-serif",fontWeight:700,border:"1px solid "+((parseInt(sp.parcelas)||2)===n?"#4f5ef0":"var(--bdr2)"),background:(parseInt(sp.parcelas)||2)===n?"#4f5ef0":"transparent",color:(parseInt(sp.parcelas)||2)===n?"#fff":"var(--navoff)"}}>{n}x</button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                );
+              })}
+              <button onClick={addSplit} style={{width:"100%",padding:".5rem",borderRadius:".45rem",border:"1px dashed #8b44f060",background:"#8b44f008",color:"#8b44f0",fontSize:".76rem",fontWeight:600,fontFamily:"'DM Sans',sans-serif",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:".35rem",marginBottom:".55rem"}}>
+                <Ic n="plus" s={13}/> Adicionar forma de pagamento
+              </button>
+              <div style={{display:"flex",flexDirection:"column",gap:".25rem",background:"var(--sumbox)",borderRadius:".45rem",padding:".55rem .7rem"}}>
+                <div style={{display:"flex",justifyContent:"space-between",fontSize:".76rem"}}>
+                  <span style={{color:"var(--tx4)"}}>Soma das formas</span>
+                  <span style={{fontWeight:700,color:"var(--tx2)"}}>{fmt(cartSplitSum)}</span>
+                </div>
+                <div style={{display:"flex",justifyContent:"space-between",fontSize:".76rem"}}>
+                  <span style={{color:"var(--tx4)"}}>Total da venda</span>
+                  <span style={{fontWeight:700,color:"var(--tx2)"}}>{fmt(cartTotal)}</span>
+                </div>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",borderTop:"1px solid var(--bdr2)",marginTop:".15rem",paddingTop:".3rem",fontSize:".78rem"}}>
+                  {Math.abs(cartSplitRemaining)<0.01
+                    ? <><span style={{color:"#10b981",fontWeight:700,display:"flex",alignItems:"center",gap:".3rem"}}><Ic n="check" s={13}/>Valores conferem</span><span style={{color:"#10b981",fontWeight:700}}>OK</span></>
+                    : <><span style={{color:cartSplitRemaining>0?"#f59e0b":"#f56565",fontWeight:700}}>{cartSplitRemaining>0?"Falta distribuir":"Passou do total"}</span><span style={{color:cartSplitRemaining>0?"#f59e0b":"#f56565",fontWeight:700}}>{(cartSplitRemaining>0?"":"+")+fmt(Math.abs(cartSplitRemaining))}</span></>
+                  }
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
         <Inp label="Observações" hint="opcional" placeholder="Ex: Entregar no período da tarde..." value={cartNotes} onChange={e=>setCartNotes(e.target.value)}/>
 
         {/*  RESUMO TOTAL  */}
@@ -3250,8 +3372,8 @@ export default function App(){
           </button>
           <div style={{display:"flex",gap:".5rem"}}>
             <Btn v="ghost" onClick={()=>{setModal(null);cartReset();}}>Cancelar</Btn>
-            <Btn v="ok" onClick={registerSale} disabled={cartItems.every(i=>!i.product_id)}>
-              <Ic n="save" s={13}/>Finalizar Venda · {fmt(cartTotal)}
+            <Btn v="ok" onClick={registerSale} disabled={cartItems.every(i=>!i.product_id)||!cartSplitValid}>
+              <Ic n="save" s={13}/>{cartSplitEnabled&&!cartSplitValid?"Ajuste os pagamentos":"Finalizar Venda · "+fmt(cartTotal)}
             </Btn>
           </div>
         </div>
