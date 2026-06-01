@@ -671,6 +671,8 @@ export default function App(){
   // Contas a pagar (Financeiro)
   const[payables,setPayables]=useState([]);
   const[payForm,setPayForm]=useState({description:"",value:"",category:"aluguel",supplier_name:"",due_date:"",recurring:false,installments:1});
+  const[payTarget,setPayTarget]=useState(null); // parcela selecionada para registrar pagamento
+  const[payAmount,setPayAmount]=useState("");
   const[finTab,setFinTab]=useState("resumo"); // sub-guia da tela Financeiro
   const[estTab,setEstTab]=useState("estoque"); // sub-guia da tela Estoque
   //  Config global 
@@ -1559,18 +1561,21 @@ export default function App(){
     setPayForm({description:"",value:"",category:"aluguel",supplier_name:"",due_date:"",recurring:false,installments:1});
     loadPayables();toast$(n>1?`${n} parcelas registradas em A Pagar!`:"Conta a pagar registrada!");
   };
-  const payPayable=async(id)=>{
-    const p=payables.find(x=>x.id===id);
-    await supabase.from("payables").update({paid:true,paid_date:today()}).eq("id",id);
-    if(p){
-      await supabase.from("cash_transactions").insert([{id:uid(),description:"Pagamento · "+p.description+(p.supplier_name?" · "+p.supplier_name:""),value:p.value,type:"saida",category:"Pagamento",added_by:cu.display_name,date:today()}]);
-      if(p.recurring){
-        let nextDue=null;
-        if(p.due_date){const d=new Date(p.due_date+"T00:00:00");d.setMonth(d.getMonth()+1);nextDue=d.toISOString().slice(0,10);}
-        await supabase.from("payables").insert([{id:uid(),description:p.description,value:p.value,category:p.category||"outro",supplier_name:p.supplier_name||null,due_date:nextDue,paid:false,recurring:true,added_by:cu.display_name,created_at:nowISO()}]);
-      }
+  const confirmPayPayable=async()=>{
+    const p=payTarget; if(!p)return;
+    const paidVal=parseFloat(payAmount);
+    if(isNaN(paidVal)||paidVal<0){toast$("Informe um valor válido para o pagamento.","#f56565");return;}
+    await supabase.from("payables").update({paid:true,paid_date:today(),paid_amount:paidVal}).eq("id",p.id);
+    await supabase.from("cash_transactions").insert([{id:uid(),description:"Pagamento · "+p.description+(p.supplier_name?" · "+p.supplier_name:""),value:paidVal,type:"saida",category:"Pagamento",added_by:cu.display_name,date:today()}]);
+    if(p.recurring){
+      let nextDue=null;
+      if(p.due_date){const d=new Date(p.due_date+"T00:00:00");d.setMonth(d.getMonth()+1);nextDue=d.toISOString().slice(0,10);}
+      await supabase.from("payables").insert([{id:uid(),description:p.description,value:p.value,category:p.category||"outro",supplier_name:p.supplier_name||null,due_date:nextDue,paid:false,recurring:true,added_by:cu.display_name,created_at:nowISO()}]);
     }
-    loadPayables();toast$(p&&p.recurring?"✅ Pago! Próxima conta recorrente já foi gerada.":"✅ Pago e lançado no caixa (saída)!","#f59e0b");
+    const eco=(parseFloat(p.value)||0)-paidVal;
+    setPayTarget(null);setPayAmount("");
+    loadPayables();
+    toast$(eco>0.005?"✅ Pago! Economia de "+fmt(eco)+" (desconto).":(eco<-0.005?"✅ Pago com acréscimo de "+fmt(-eco)+".":"✅ Pago e lançado no caixa!"),"#f59e0b");
   };
   const deletePayable=async(id)=>{
     if(!window.confirm('Excluir esta conta a pagar?'))return;
@@ -2458,11 +2463,20 @@ export default function App(){
               <h2 style={{fontFamily:"'Syne',sans-serif",fontWeight:800,fontSize:"1rem",color:"var(--tx)"}}>📄 Contas a Pagar</h2>
               <XBtn rows={(payables||[]).map(p=>({Categoria:p.category||"—",Descrição:p.description,Fornecedor:p.supplier_name||"—",Valor:fmt(p.value),Vencimento:p.due_date||"—",Status:p.paid?"Pago":"Pendente"}))} name="contas-a-pagar-caixapro" sheet="A Pagar"/>
             </div>
-            <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:".6rem",marginBottom:".75rem"}}>
-              <KCard label="Em aberto" value={fmtN((payables||[]).filter(p=>!p.paid).length+orderPayables.length)} sub={fmt((payables||[]).filter(p=>!p.paid).reduce((a,p)=>a+p.value,0)+orderPayables.reduce((a,o)=>a+o.value,0))} color="#f59e0b"/>
-              <KCard label="Vencidas" value={fmtN((payables||[]).filter(p=>!p.paid&&p.due_date&&new Date(p.due_date)<new Date()).length)} sub={fmt((payables||[]).filter(p=>!p.paid&&p.due_date&&new Date(p.due_date)<new Date()).reduce((a,p)=>a+p.value,0))} color="#f56565"/>
-              <KCard label="Pago total" value={fmt((payables||[]).filter(p=>p.paid).reduce((a,p)=>a+p.value,0))} color="#10b981"/>
-            </div>
+            {(()=>{
+              const pagas=(payables||[]).filter(p=>p.paid);
+              const dividaPaga=pagas.reduce((a,p)=>a+(parseFloat(p.value)||0),0);
+              const capitalPago=pagas.reduce((a,p)=>a+(p.paid_amount!=null?(parseFloat(p.paid_amount)||0):(parseFloat(p.value)||0)),0);
+              const economia=dividaPaga-capitalPago;
+              return(
+              <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(108px,1fr))",gap:".6rem",marginBottom:".75rem"}}>
+                <KCard label="Em aberto" value={fmtN((payables||[]).filter(p=>!p.paid).length+orderPayables.length)} sub={fmt((payables||[]).filter(p=>!p.paid).reduce((a,p)=>a+p.value,0)+orderPayables.reduce((a,o)=>a+o.value,0))} color="#f59e0b"/>
+                <KCard label="Vencidas" value={fmtN((payables||[]).filter(p=>!p.paid&&p.due_date&&new Date(p.due_date)<new Date()).length)} sub={fmt((payables||[]).filter(p=>!p.paid&&p.due_date&&new Date(p.due_date)<new Date()).reduce((a,p)=>a+p.value,0))} color="#f56565"/>
+                <KCard label="Capital pago" value={fmt(capitalPago)} sub={dividaPaga>capitalPago?"de "+fmt(dividaPaga):""} color="#10b981"/>
+                <KCard label="Economia" value={fmt(economia)} sub={dividaPaga>0?fmtPct((economia/dividaPaga)*100)+" da dívida":"descontos"} color={economia>0.005?"#10b981":"#8890b0"}/>
+              </div>
+              );
+            })()}
             {canEdit&&<div style={{background:"var(--card)",border:"1px solid var(--bdr)",borderRadius:".75rem",padding:"1rem",marginBottom:".75rem"}}>
               <div style={{fontFamily:"'Syne',sans-serif",fontWeight:700,fontSize:".8rem",color:"var(--tx2)",marginBottom:".65rem"}}>➕ Nova conta a pagar (boleto, aluguel, parcela...)</div>
               <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))",gap:".5rem",marginBottom:".5rem"}}>
@@ -2544,11 +2558,12 @@ export default function App(){
                           {!p.paid&&!ov&&dv!==null&&dv<=3&&<Badge color="#f59e0b" sm>{"⏰ Vence em "+dv+"d"}</Badge>}
                           {p.recurring&&<Badge color="#8b44f0" sm>🔁 Recorrente</Badge>}
                         </div>
-                        <div style={{fontSize:".67rem",color:"var(--tx5)"}}>{p.supplier_name||"—"}{p.due_date&&" · Vcto: "+new Date(p.due_date+"T00:00:00").toLocaleDateString("pt-BR")}{p.paid_date&&" · Pago: "+p.paid_date}</div>
+                        <div style={{fontSize:".67rem",color:"var(--tx5)"}}>{p.supplier_name||"—"}{p.due_date&&" · Vcto: "+new Date(p.due_date+"T00:00:00").toLocaleDateString("pt-BR")}{p.paid_date&&" · Pago "+p.paid_date+(p.paid_amount!=null&&Math.abs((parseFloat(p.value)||0)-(parseFloat(p.paid_amount)||0))>0.005?" · "+fmt(parseFloat(p.paid_amount)||0):"")}</div>
+                        {p.paid&&p.paid_amount!=null&&((parseFloat(p.value)||0)-(parseFloat(p.paid_amount)||0))>0.005&&<div style={{fontSize:".66rem",color:"#10b981",fontWeight:600,marginTop:".1rem"}}>💚 Economia de {fmt((parseFloat(p.value)||0)-(parseFloat(p.paid_amount)||0))} no pagamento antecipado</div>}
                       </div>
                       <div style={{display:"flex",alignItems:"center",gap:".55rem",flexShrink:0,marginLeft:".75rem"}}>
                         <span style={{fontWeight:700,fontFamily:"'Syne',sans-serif",color:p.paid?"#10b981":ov?"#f56565":"#f59e0b",fontSize:".9rem"}}>{fmt(p.value)}</span>
-                        {canEdit&&!p.paid&&<button onClick={()=>payPayable(p.id)} style={{background:"#f59e0b15",border:"1px solid #f59e0b30",borderRadius:".4rem",padding:".28rem .6rem",color:"#f59e0b",fontSize:".72rem",fontFamily:"'DM Sans',sans-serif",fontWeight:600,cursor:"pointer"}}>💸 Pagar</button>}
+                        {canEdit&&!p.paid&&<button onClick={()=>{setPayTarget(p);setPayAmount(String(p.value));}} style={{background:"#f59e0b15",border:"1px solid #f59e0b30",borderRadius:".4rem",padding:".28rem .6rem",color:"#f59e0b",fontSize:".72rem",fontFamily:"'DM Sans',sans-serif",fontWeight:600,cursor:"pointer"}}>💸 Pagar</button>}
                         {isAdmin&&<button onClick={()=>deletePayable(p.id)} style={{background:"none",border:"none",color:"var(--tx6)",padding:".2rem",cursor:"pointer"}}><Ic n="trash" s={13}/></button>}
                       </div>
                     </div>
@@ -3417,6 +3432,48 @@ export default function App(){
     {showA&&<Analytics onClose={()=>setShowA(false)} sales={sales} cashTx={cashTx} products={products} clients={clients} dark={dark} receivables={receivables} orders={orders}/>}
 
     {/* ══ MODAIS ══ */}
+
+    {/* Registrar pagamento de conta a pagar (com desconto/antecipação) */}
+    {payTarget&&(()=>{
+      const orig=parseFloat(payTarget.value)||0;
+      const pago=parseFloat(payAmount);
+      const dif=isNaN(pago)?0:orig-pago;
+      const pct=orig>0&&!isNaN(pago)?(dif/orig)*100:0;
+      const catIcon={aluguel:"🏠",emprestimo:"🏦",compra:"📦",fornecedor:"🚚",imposto:"🧾",salario:"👤",servico:"🔧",outro:"📋"}[payTarget.category]||"📋";
+      return(
+        <Modal title="Registrar Pagamento" onClose={()=>{setPayTarget(null);setPayAmount("");}} icon="dollar">
+          <div style={{background:"var(--sumbox)",borderRadius:".6rem",padding:".8rem .9rem",marginBottom:".9rem"}}>
+            <div style={{display:"flex",alignItems:"center",gap:".4rem",marginBottom:".2rem"}}>
+              <span style={{fontSize:"1rem"}}>{catIcon}</span>
+              <span style={{fontWeight:700,fontSize:".88rem",color:"var(--tx)"}}>{payTarget.description}</span>
+            </div>
+            <div style={{fontSize:".68rem",color:"var(--tx5)"}}>{payTarget.supplier_name||"—"}{payTarget.due_date&&" · Vencimento "+new Date(payTarget.due_date+"T00:00:00").toLocaleDateString("pt-BR")}</div>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:".55rem",paddingTop:".55rem",borderTop:"1px solid var(--sep)"}}>
+              <span style={{fontSize:".72rem",color:"var(--tx4)"}}>Valor da parcela (registrado)</span>
+              <span style={{fontWeight:700,fontFamily:"'Syne',sans-serif",fontSize:".95rem",color:"var(--tx2)"}}>{fmt(orig)}</span>
+            </div>
+          </div>
+          <div style={{marginBottom:".85rem"}}>
+            <div style={{fontSize:".7rem",color:"var(--sub)",textTransform:"uppercase",letterSpacing:".05em",marginBottom:".35rem",fontWeight:700}}>💸 Valor a pagar agora</div>
+            <input type="number" min="0" step="0.01" autoFocus value={payAmount} onChange={e=>setPayAmount(e.target.value)} onKeyDown={e=>e.key==="Enter"&&confirmPayPayable()} placeholder="0,00" style={{...IS,fontSize:"1.05rem",fontWeight:700,padding:".7rem .85rem"}}/>
+            <div style={{display:"flex",gap:".4rem",marginTop:".5rem",flexWrap:"wrap"}}>
+              <button onClick={()=>setPayAmount(String(orig))} style={{background:"var(--pill)",border:"1px solid var(--bdr2)",borderRadius:".4rem",padding:".25rem .6rem",fontSize:".7rem",color:"var(--tx4)",fontFamily:"'DM Sans',sans-serif",fontWeight:600,cursor:"pointer"}}>Valor cheio</button>
+              {[5,10,15].map(d=><button key={d} onClick={()=>setPayAmount((orig*(1-d/100)).toFixed(2))} style={{background:"#10b98112",border:"1px solid #10b98130",borderRadius:".4rem",padding:".25rem .6rem",fontSize:".7rem",color:"#10b981",fontFamily:"'DM Sans',sans-serif",fontWeight:600,cursor:"pointer"}}>-{d}%</button>)}
+            </div>
+          </div>
+          {!isNaN(pago)&&Math.abs(dif)>0.005&&(
+            <div style={{background:dif>0?"#10b98112":"#f59e0b12",border:`1px solid ${dif>0?"#10b98130":"#f59e0b30"}`,borderRadius:".6rem",padding:".7rem .85rem",marginBottom:".9rem",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+              <span style={{fontSize:".75rem",fontWeight:600,color:dif>0?"#10b981":"#f59e0b"}}>{dif>0?"💚 Desconto (economia)":"⚠️ Acréscimo (juros/multa)"}</span>
+              <span style={{fontWeight:800,fontFamily:"'Syne',sans-serif",fontSize:"1rem",color:dif>0?"#10b981":"#f59e0b"}}>{fmt(Math.abs(dif))} <span style={{fontSize:".72rem",fontWeight:600}}>({Math.abs(pct).toFixed(1)}%)</span></span>
+            </div>
+          )}
+          <div style={{display:"flex",gap:".5rem",justifyContent:"flex-end"}}>
+            <Btn v="ghost" onClick={()=>{setPayTarget(null);setPayAmount("");}}>Cancelar</Btn>
+            <Btn v="ok" onClick={confirmPayPayable}><Ic n="save" s={13}/>Confirmar pagamento</Btn>
+          </div>
+        </Modal>
+      );
+    })()}
 
     {/* Nova venda — CARRINHO */}
     {modal==="sale"&&(
