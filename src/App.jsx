@@ -408,7 +408,7 @@ function LoginScreen({onLogin,dark}){
 }
 
 //  ANALYTICS 
-function Analytics({onClose,sales,cashTx,products,clients,dark,receivables=[],orders=[]}){
+function Analytics({onClose,sales,cashTx,products,clients,dark,receivables=[],orders=[],payables=[]}){
   // Local batchRevenue (same logic as App scope, needed here as Analytics is a separate component)
   const batchRevenue=(arr)=>{
     if(!arr||!arr.length)return 0;
@@ -461,6 +461,11 @@ function Analytics({onClose,sales,cashTx,products,clients,dark,receivables=[],or
     return Object.entries(m).map(([k,v],i)=>({n:k,v,c:colors[i%5]}));
   },[fS]);
   const totalPay=pays.reduce((a,p)=>a+p.v,0);
+  // Contas em aberto (saldo atual, não filtrado por período) + saldo projetado
+  const aReceberOpen=(receivables||[]).filter(r=>!r.paid).reduce((a,r)=>a+(parseFloat(r.value)||0),0);
+  const aPagarOpen=(payables||[]).filter(p=>!p.paid).reduce((a,p)=>a+(parseFloat(p.value)||0),0)+(orders||[]).filter(o=>o.status==="pendente"||o.status==="parcial").reduce((a,o)=>a+(parseFloat(o.remaining_value)||0),0);
+  const saldoCaixaTot=(cashTx||[]).reduce((a,t)=>a+(t.type==="entrada"?(parseFloat(t.value)||0):-(parseFloat(t.value)||0)),0);
+  const saldoProj=saldoCaixaTot+aReceberOpen-aPagarOpen;
 
   const RANGES=[{k:"1d",l:"Hoje"},{k:"7d",l:"7 dias"},{k:"30d",l:"30 dias"},{k:"3m",l:"3 meses"},{k:"6m",l:"6 meses"},{k:"12m",l:"12 meses"},{k:"custom",l:"Personalizado"}];
   const PCOLS=["#f59e0b","#9ca3af","#cd7c2f","#4f5ef0","#10b981","#8b44f0","#f56565","#0891b2"];
@@ -491,6 +496,16 @@ function Analytics({onClose,sales,cashTx,products,clients,dark,receivables=[],or
         <KCard label="Valor estoque" value={fmt(stockVal)} color="#8b44f0" icon="stock"/>
         <KCard label="Clientes" value={clients.length} color="#10b981" icon="client"/>
         <KCard label="A Receber" value={fmt((receivables||[]).filter(r=>!r.paid).reduce((a,r)=>a+r.value,0))} sub={(receivables||[]).filter(r=>!r.paid).length+" pendente(s)"} color="#f59e0b" icon="dollar"/>
+        <KCard label="A Pagar" value={fmt(aPagarOpen)} sub="contas + pedidos" color="#f56565" icon="dollar"/>
+      </div>
+
+      {/* Saldo projetado */}
+      <div style={{background:saldoProj>=0?"linear-gradient(135deg,#10b98118,#10b98106)":"linear-gradient(135deg,#f5656518,#f5656506)",border:`1px solid ${saldoProj>=0?"#10b98140":"#f5656540"}`,borderRadius:".75rem",padding:".85rem 1rem",marginBottom:"1rem",display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:".5rem"}}>
+        <div>
+          <div style={{fontSize:".66rem",color:"var(--sub)",textTransform:"uppercase",letterSpacing:".04em"}}>Saldo projetado</div>
+          <div style={{fontSize:".64rem",color:"var(--tx6)"}}>caixa {fmt(saldoCaixaTot)} + a receber {fmt(aReceberOpen)} − a pagar {fmt(aPagarOpen)}</div>
+        </div>
+        <div style={{fontSize:"1.5rem",fontWeight:800,fontFamily:"'Syne',sans-serif",color:saldoProj>=0?"#10b981":"#f56565"}}>{fmt(saldoProj)}</div>
       </div>
 
       <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))",gap:".85rem",marginBottom:".85rem"}}>
@@ -516,7 +531,7 @@ function Analytics({onClose,sales,cashTx,products,clients,dark,receivables=[],or
               </div>
             </div>
           )}
-        </div>}
+        </div>
       </div>
 
       {/* Ranking produtos */}
@@ -858,6 +873,8 @@ export default function App(){
 
   const isAdmin=cu?.role==="admin";
   const canEdit=cu?.role==="admin"||cu?.role==="operator";
+  // Pode excluir registros: admin sempre; operador só se liberado nas permissões
+  const canDelete=isAdmin||!!(cu?.permissions&&cu.permissions.candelete);
   // Pedidos a fornecedor (pendente/parcial) refletidos como contas a pagar futuras
   const orderPayables=useMemo(()=>(orders||[]).filter(o=>o.status==="pendente"||o.status==="parcial").map(o=>({
     id:"ord_"+o.id,_order:true,
@@ -1762,6 +1779,15 @@ export default function App(){
     await supabase.from("app_users").update(updates).eq("id",editing.id);
     toast$("Usuário atualizado!");setModal(null);setEditing(null);
   };
+  const deleteUser=async(id)=>{
+    if(!isAdmin){toast$("Apenas administradores podem excluir usuários.","#f56565");return;}
+    const u=appUsers.find(x=>x.id===id);
+    if(u&&u.username===cu.username){toast$("Você não pode excluir o próprio usuário.","#f56565");return;}
+    if(!window.confirm("Excluir o usuário "+(u?u.display_name:"")+"? Esta ação é permanente."))return;
+    await supabase.from("app_users").delete().eq("id",id);
+    setUsers(prev=>prev.filter(x=>x.id!==id));
+    toast$("Usuário excluído.","#f59e0b");
+  };
 
   // Filtros
   const cats=["all",...new Set(products.map(p=>p.category).filter(Boolean))];
@@ -2140,7 +2166,7 @@ export default function App(){
                     }} style={{background:"none",border:"none",color:"#4f5ef0",padding:".2rem"}} title="Repetir venda"><Ic n="refresh" s={13}/></button>}
                     {s.client_name&&<button onClick={()=>{const m="Olá "+s.client_name+"! ✅ Venda de *"+s.product_name+"* registrada. Total: *"+fmt(Math.max(0,s.total_price-(parseFloat(s.discount)||0)))+"*. Pag: "+s.payment_method+". Obrigado!";window.open("https://wa.me/?text="+encodeURIComponent(m),"_blank");}} style={{background:"none",border:"none",color:"#25d366",padding:".2rem"}} title="WhatsApp"><span style={{fontSize:13}}>📱</span></button>}
                     <button onClick={()=>{setEditing({...s,quantity:String(s.quantity),unit_price:String(s.unit_price)});setModal("editSale");}} style={{background:"none",border:"none",color:"#4f5ef0",padding:".2rem"}} title="Editar"><Ic n="edit" s={13}/></button>
-                    {isAdmin&&<button onClick={()=>deleteSale(s.id)} style={{background:"none",border:"none",color:"var(--tx6)",padding:".2rem"}} title="Excluir"><Ic n="trash" s={13}/></button>}
+                    {canDelete&&<button onClick={()=>deleteSale(s.id)} style={{background:"none",border:"none",color:"var(--tx6)",padding:".2rem"}} title="Excluir"><Ic n="trash" s={13}/></button>}
                   </div>}
                 </div>
               </div>
@@ -2224,7 +2250,7 @@ export default function App(){
                     <div style={{display:"flex",gap:".35rem",flexShrink:0,marginLeft:".65rem"}}>
                       {canEdit&&<><button onClick={()=>{setStF({product_id:p.id,qty:"",cost_total:"",notes:""});setModal("stockEntry");}} style={{background:"#0e1e0e",border:"1px solid #10b98130",borderRadius:".4rem",padding:".28rem .5rem",color:"#10b981",display:"flex",alignItems:"center"}}><Ic n="arrup" s={11}/></button>
                       <button onClick={()=>{setEditing({...p,cost_per_unit:String(p.cost_per_unit),price_per_unit:String(p.price_per_unit),stock_qty:String(p.stock_qty),min_stock:String(p.min_stock||5)});setModal("editProd");}} style={{background:"none",border:"none",color:"#4f5ef0",padding:".2rem"}}><Ic n="edit" s={13}/></button>
-                      {isAdmin&&<button onClick={()=>delProduct(p.id)} style={{background:"none",border:"none",color:"var(--tx6)",padding:".2rem"}}><Ic n="trash" s={13}/></button>}</>}
+                      {canDelete&&<button onClick={()=>delProduct(p.id)} style={{background:"none",border:"none",color:"var(--tx6)",padding:".2rem"}}><Ic n="trash" s={13}/></button>}</>}
                     </div>
                   </div>
                   <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(70px,1fr))",gap:".38rem"}}>
@@ -2564,7 +2590,7 @@ export default function App(){
                       <div style={{display:"flex",alignItems:"center",gap:".55rem",flexShrink:0,marginLeft:".75rem"}}>
                         <span style={{fontWeight:700,fontFamily:"'Syne',sans-serif",color:p.paid?"#10b981":ov?"#f56565":"#f59e0b",fontSize:".9rem"}}>{fmt(p.value)}</span>
                         {canEdit&&!p.paid&&<button onClick={()=>{setPayTarget(p);setPayAmount(String(p.value));}} style={{background:"#f59e0b15",border:"1px solid #f59e0b30",borderRadius:".4rem",padding:".28rem .6rem",color:"#f59e0b",fontSize:".72rem",fontFamily:"'DM Sans',sans-serif",fontWeight:600,cursor:"pointer"}}>💸 Pagar</button>}
-                        {isAdmin&&<button onClick={()=>deletePayable(p.id)} style={{background:"none",border:"none",color:"var(--tx6)",padding:".2rem",cursor:"pointer"}}><Ic n="trash" s={13}/></button>}
+                        {canDelete&&<button onClick={()=>deletePayable(p.id)} style={{background:"none",border:"none",color:"var(--tx6)",padding:".2rem",cursor:"pointer"}}><Ic n="trash" s={13}/></button>}
                       </div>
                     </div>
                   );
@@ -2650,7 +2676,7 @@ export default function App(){
                   <span style={{fontWeight:700,fontFamily:"'Syne',sans-serif",color:x.type==="entrada"?"#10b981":"#f56565",fontSize:".88rem"}}>{x.type==="entrada"?"+":"-"}{fmt(x.value)}</span>
                   {canEdit&&!x.sale_id&&<div style={{display:"flex",gap:".2rem"}}>
                     <button onClick={()=>{setEditing({...x,value:String(x.value)});setModal("editCash");}} style={{background:"none",border:"none",color:"#4f5ef0",padding:".2rem"}}><Ic n="edit" s={13}/></button>
-                    {isAdmin&&<button onClick={()=>deleteCash(x.id)} style={{background:"none",border:"none",color:"var(--tx6)",padding:".2rem"}}><Ic n="trash" s={13}/></button>}
+                    {canDelete&&<button onClick={()=>deleteCash(x.id)} style={{background:"none",border:"none",color:"var(--tx6)",padding:".2rem"}}><Ic n="trash" s={13}/></button>}
                   </div>}
                 </div>
               </div>
@@ -2697,7 +2723,7 @@ export default function App(){
                     <div style={{display:"flex",gap:".3rem"}}>
                       <button onClick={()=>setShowClientHist(c)} style={{background:"none",border:"none",color:"#8b44f0",padding:".2rem"}} title="Histórico"><Ic n="analytics" s={13}/></button>
                       {c.phone&&<button onClick={()=>{const m="Olá "+c.name+"! Como está o tratamento? Estamos à disposição 💉";window.open("https://wa.me/55"+c.phone.replace(/[^0-9]/g,"")+"?text="+encodeURIComponent(m),"_blank");}} style={{background:"none",border:"none",color:"#25d366",padding:".2rem"}} title="WhatsApp"><span style={{fontSize:13}}>📱</span></button>}
-                      {canEdit&&<><button onClick={()=>{setEditing({...c});setModal("editCliente");}} style={{background:"none",border:"none",color:"#4f5ef0",padding:".2rem"}}><Ic n="edit" s={13}/></button>{isAdmin&&<button onClick={()=>delClient(c.id)} style={{background:"none",border:"none",color:"var(--tx6)",padding:".2rem"}}><Ic n="trash" s={13}/></button>}</>}
+                      {canEdit&&<><button onClick={()=>{setEditing({...c});setModal("editCliente");}} style={{background:"none",border:"none",color:"#4f5ef0",padding:".2rem"}}><Ic n="edit" s={13}/></button>{canDelete&&<button onClick={()=>delClient(c.id)} style={{background:"none",border:"none",color:"var(--tx6)",padding:".2rem"}}><Ic n="trash" s={13}/></button>}</>}
                     </div>
                   </div>
                 </div>
@@ -2732,7 +2758,7 @@ export default function App(){
                   </div>
                   {canEdit&&<div style={{display:"flex",gap:".35rem",flexShrink:0,marginLeft:".65rem"}}>
                     <button onClick={()=>{setEditing({...p,cost_per_unit:String(p.cost_per_unit),price_per_unit:String(p.price_per_unit),stock_qty:String(p.stock_qty),min_stock:String(p.min_stock||5),units_per_pack:String(p.units_per_pack||1)});setModal("editProd");}} style={{background:"none",border:"none",color:"#4f5ef0"}}><Ic n="edit" s={13}/></button>
-                    {isAdmin&&<button onClick={()=>delProduct(p.id)} style={{background:"none",border:"none",color:"var(--tx6)"}}><Ic n="trash" s={13}/></button>}
+                    {canDelete&&<button onClick={()=>delProduct(p.id)} style={{background:"none",border:"none",color:"var(--tx6)"}}><Ic n="trash" s={13}/></button>}
                   </div>}
                 </div>
                 <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(78px,1fr))",gap:".38rem"}}>
@@ -2953,7 +2979,7 @@ export default function App(){
                           <button onClick={()=>markOrderLost(order)} title="Marcar como perdido" style={{background:"#1e1010",border:"1px solid #3a1515",borderRadius:".4rem",padding:".28rem .55rem",color:"#f59e0b",fontSize:".7rem",fontFamily:"'DM Sans',sans-serif",fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}}>💀</button>
                         )}
                         {canEdit&&(order.status==="pendente"||order.status==="parcial")&&<button onClick={()=>setEditingOrder(order)} style={{background:"none",border:"none",color:"#4f5ef0",padding:".2rem"}}><Ic n="edit" s={13}/></button>}
-                        {isAdmin&&<button onClick={()=>{if(window.confirm("Excluir pedido e reverter todo o fluxo? Esta ação não pode ser desfeita."))deleteOrder(order);}} style={{background:"none",border:"none",color:"var(--tx6)",padding:".2rem"}} title="Excluir e reverter tudo"><Ic n="trash" s={13}/></button>}
+                        {canDelete&&<button onClick={()=>{if(window.confirm("Excluir pedido e reverter todo o fluxo? Esta ação não pode ser desfeita."))deleteOrder(order);}} style={{background:"none",border:"none",color:"var(--tx6)",padding:".2rem"}} title="Excluir e reverter tudo"><Ic n="trash" s={13}/></button>}
                       </div>
                     </div>
                     {/* Financeiro */}
@@ -3062,7 +3088,7 @@ export default function App(){
                       <div style={{display:"flex",alignItems:"center",gap:".55rem",flexShrink:0,marginLeft:".75rem"}}>
                         <span style={{fontWeight:700,fontFamily:"'Syne',sans-serif",color:r.paid?"#10b981":ov?"#f56565":"#f59e0b",fontSize:".9rem"}}>{fmt(r.value)}</span>
                         {!r.paid&&<button onClick={()=>payReceivable(r.id)} style={{background:"#10b98115",border:"1px solid #10b98130",borderRadius:".4rem",padding:".28rem .6rem",color:"#10b981",fontSize:".72rem",fontFamily:"'DM Sans',sans-serif",fontWeight:600,cursor:"pointer"}}>✅ Recebido</button>}
-                        <button onClick={()=>deleteReceivable(r.id)} style={{background:"none",border:"none",color:"var(--tx6)",padding:".2rem",cursor:"pointer"}}><Ic n="trash" s={13}/></button>
+                        {canDelete&&<button onClick={()=>deleteReceivable(r.id)} style={{background:"none",border:"none",color:"var(--tx6)",padding:".2rem",cursor:"pointer"}}><Ic n="trash" s={13}/></button>}
                       </div>
                     </div>
                   );
@@ -3108,15 +3134,18 @@ export default function App(){
                   {appUsers.map(u=>(
                     <div key={u.id} style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:".72rem 1rem",borderBottom:"1px solid var(--sep)"}}>
                       <div>
-                        <div style={{fontWeight:700,fontSize:".83rem",color:"var(--tx)",display:"flex",alignItems:"center",gap:".4rem"}}>
+                        <div style={{fontWeight:700,fontSize:".83rem",color:"var(--tx)",display:"flex",alignItems:"center",gap:".4rem",flexWrap:"wrap"}}>
                           {u.display_name}
-                          <Badge color={u.role==="admin"?"#8b44f0":u.role==="operador"?"#4f5ef0":"#10b981"} sm>{u.role}</Badge>
+                          <Badge color={u.role==="admin"?"#8b44f0":(u.role==="operator"||u.role==="operador")?"#4f5ef0":"#10b981"} sm>{u.role==="admin"?"Administrador":(u.role==="operator"||u.role==="operador")?"Operador":"Visualizador"}</Badge>
                           {!u.active&&<Badge color="#f56565" sm>inativo</Badge>}
+                          {u.role!=="admin"&&u.permissions&&u.permissions.candelete&&<Badge color="#f56565" sm>🗑️ pode excluir</Badge>}
                         </div>
                         <div style={{fontSize:".68rem",color:"var(--tx5)"}}>@{u.username} · último acesso: {u.last_login||"—"}</div>
                       </div>
-                      <div style={{display:"flex",gap:".3rem"}}>
+                      <div style={{display:"flex",gap:".3rem",alignItems:"center"}}>
+                        {isAdmin&&<button onClick={()=>{setEditing({...u,permissions:u.permissions||{}});setModal("editUser");}} style={{background:"#4f5ef015",border:"1px solid #4f5ef030",borderRadius:".4rem",padding:".28rem .55rem",color:"#4f5ef0",cursor:"pointer",fontSize:".72rem",fontFamily:"'DM Sans',sans-serif",fontWeight:600,display:"flex",alignItems:"center",gap:".25rem"}}><Ic n="edit" s={12}/>Editar</button>}
                         {u.username!==cu.username&&<button onClick={()=>toggleUser(u.id,!u.active)} style={{background:"none",border:"none",color:u.active?"#f59e0b":"#10b981",padding:".2rem",cursor:"pointer",fontSize:".72rem",fontFamily:"'DM Sans',sans-serif",fontWeight:600}}>{u.active?"Desativar":"Ativar"}</button>}
+                        {isAdmin&&u.username!==cu.username&&<button onClick={()=>deleteUser(u.id)} title="Excluir usuário" style={{background:"none",border:"none",color:"var(--tx6)",padding:".2rem",cursor:"pointer"}}><Ic n="trash" s={13}/></button>}
                       </div>
                     </div>
                   ))}
@@ -3429,7 +3458,7 @@ export default function App(){
     </div>
 
     {/* ══ ANALYTICS ══ */}
-    {showA&&<Analytics onClose={()=>setShowA(false)} sales={sales} cashTx={cashTx} products={products} clients={clients} dark={dark} receivables={receivables} orders={orders}/>}
+    {showA&&<Analytics onClose={()=>setShowA(false)} sales={sales} cashTx={cashTx} products={products} clients={clients} dark={dark} receivables={receivables} orders={orders} payables={payables}/>}
 
     {/* ══ MODAIS ══ */}
 
@@ -3947,7 +3976,7 @@ export default function App(){
         <Inp label="Cliente" value={editing.client_name||""} onChange={e=>setEditing(v=>({...v,client_name:e.target.value}))}/>
         <R2><Sel label="Pagamento" value={editing.payment_method||"PIX"} onChange={e=>setEditing(v=>({...v,payment_method:e.target.value}))}>{PAYS.map(m=><option key={m} value={m}>{m}</option>)}</Sel><Inp label="Observações" value={editing.notes||""} onChange={e=>setEditing(v=>({...v,notes:e.target.value}))}/></R2>
         <div style={{display:"flex",gap:".5rem",justifyContent:"space-between"}}>
-          {isAdmin&&<Btn v="del" sm onClick={()=>{deleteSale(editing.id);setModal(null);setEditing(null);}}><Ic n="trash" s={12}/>Excluir</Btn>}
+          {canDelete&&<Btn v="del" sm onClick={()=>{deleteSale(editing.id);setModal(null);setEditing(null);}}><Ic n="trash" s={12}/>Excluir</Btn>}
           <div style={{display:"flex",gap:".5rem",marginLeft:"auto"}}><Btn v="ghost" onClick={()=>{setModal(null);setEditing(null);}}>Cancelar</Btn><Btn v="ok" onClick={updateSale}><Ic n="save" s={13}/>Salvar</Btn></div>
         </div>
       </Modal>
@@ -3991,7 +4020,7 @@ export default function App(){
         <Inp label="Valor (R$) *" type="number" min="0" step="0.01" value={editing.value} onChange={e=>setEditing(v=>({...v,value:e.target.value}))}/>
         <Sel label="Categoria" value={editing.category||"outro"} onChange={e=>setEditing(v=>({...v,category:e.target.value}))}>{activeCats.map(c=><option key={c.key} value={c.key}>{c.icon} {c.label}</option>)}</Sel>
         <div style={{display:"flex",gap:".5rem",justifyContent:"space-between"}}>
-          {isAdmin&&<Btn v="del" sm onClick={()=>{deleteCash(editing.id);setModal(null);setEditing(null);}}><Ic n="trash" s={12}/>Excluir</Btn>}
+          {canDelete&&<Btn v="del" sm onClick={()=>{deleteCash(editing.id);setModal(null);setEditing(null);}}><Ic n="trash" s={12}/>Excluir</Btn>}
           <div style={{display:"flex",gap:".5rem",marginLeft:"auto"}}><Btn v="ghost" onClick={()=>{setModal(null);setEditing(null);}}>Cancelar</Btn><Btn v="ok" onClick={updateCash}><Ic n="save" s={13}/>Salvar</Btn></div>
         </div>
       </Modal>
@@ -4017,7 +4046,7 @@ export default function App(){
           </div>
         )}
         <div style={{display:"flex",gap:".5rem",justifyContent:"space-between"}}>
-          {isAdmin&&<Btn v="del" sm onClick={()=>delProduct(pf.id)}><Ic n="trash" s={12}/>Excluir</Btn>}
+          {canDelete&&<Btn v="del" sm onClick={()=>delProduct(pf.id)}><Ic n="trash" s={12}/>Excluir</Btn>}
           <div style={{display:"flex",gap:".5rem",marginLeft:"auto"}}><Btn v="ghost" onClick={()=>setModal(null)}>Cancelar</Btn><Btn onClick={addProduct}><Ic n="save" s={13}/>Salvar</Btn></div>
         </div>
       </Modal>
@@ -4074,7 +4103,7 @@ export default function App(){
         <Inp label="Notas do protocolo" placeholder="Ex: Responde bem à dose 5mg..." value={editing.treatment_notes||""} onChange={e=>setEditing(v=>({...v,treatment_notes:e.target.value}))}/>
       </div>
       <div style={{display:"flex",gap:".5rem",justifyContent:"space-between"}}>
-        {isAdmin&&<Btn v="del" sm onClick={()=>{delClient(editing.id);setModal(null);setEditing(null);}}><Ic n="trash" s={12}/>Excluir</Btn>}
+        {canDelete&&<Btn v="del" sm onClick={()=>{delClient(editing.id);setModal(null);setEditing(null);}}><Ic n="trash" s={12}/>Excluir</Btn>}
         <div style={{display:"flex",gap:".5rem",marginLeft:"auto"}}><Btn v="ghost" onClick={()=>{setModal(null);setEditing(null);}}>Cancelar</Btn><Btn onClick={saveClient}><Ic n="save" s={13}/>Salvar</Btn></div>
       </div>
     </Modal>)}
@@ -4095,7 +4124,14 @@ export default function App(){
       <R2><Inp label="Nome *" value={editing.display_name} onChange={e=>setEditing(v=>({...v,display_name:e.target.value}))}/><Sel label="Nível" value={editing.role} onChange={e=>setEditing(v=>({...v,role:e.target.value}))} disabled={editing.id===cu.id}><option value="admin">Administrador</option><option value="operator">Operador</option><option value="viewer">Visualizador</option></Sel></R2>
       <Field label="Status"><div style={{display:"flex",gap:".5rem"}}>{[{v:true,l:"✅ Ativo"},{v:false,l:"🚫 Inativo"}].map(o=><button key={String(o.v)} onClick={()=>setEditing(v=>({...v,active:o.v}))} disabled={editing.id===cu.id} style={{flex:1,padding:".5rem",borderRadius:".45rem",border:`1px solid ${editing.active===o.v?"#4f5ef0":"var(--bdr2)"}`,background:editing.active===o.v?"#4f5ef020":"transparent",color:editing.active===o.v?"#4f5ef0":"var(--tx5)",fontFamily:"'DM Sans',sans-serif",fontWeight:600,fontSize:".82rem"}}>{o.l}</button>)}</div></Field>
       {editing.role!=="admin"&&<div style={{borderTop:"1px solid var(--bdr)",paddingTop:".8rem",marginBottom:".8rem"}}>
-        <div style={{fontSize:".72rem",color:"#8b44f0",marginBottom:".6rem",display:"flex",gap:".3rem",alignItems:"center",fontWeight:700}}><Ic n="key" s={12}/>Permissões de acesso (telas que este usuário pode abrir)</div>
+        <div style={{fontSize:".72rem",color:"#8b44f0",marginBottom:".5rem",display:"flex",gap:".3rem",alignItems:"center",fontWeight:700}}><Ic n="key" s={12}/>Permissões de acesso</div>
+        <div style={{fontSize:".64rem",color:"var(--tx5)",marginBottom:".3rem",textTransform:"uppercase",letterSpacing:".04em"}}>Aplicar perfil pronto (De ▸ Para)</div>
+        <div style={{display:"flex",gap:".35rem",flexWrap:"wrap",marginBottom:".7rem"}}>
+          {[{l:"🟢 Acesso total",p:{dashboard:true,vendas:true,estoque:true,financeiro:true,clientes:true,candelete:true}},{l:"🔵 Operador padrão",p:{dashboard:true,vendas:true,estoque:true,financeiro:true,clientes:true,candelete:false}},{l:"🟡 Básico (vendas)",p:{dashboard:true,vendas:true,estoque:false,financeiro:false,clientes:true,candelete:false}}].map(t=>(
+            <button key={t.l} onClick={()=>setEditing(v=>({...v,permissions:{...t.p}}))} style={{background:"var(--pill)",border:"1px solid var(--bdr2)",borderRadius:".45rem",padding:".32rem .62rem",fontSize:".71rem",color:"var(--tx3)",fontFamily:"'DM Sans',sans-serif",fontWeight:600,cursor:"pointer"}}>{t.l}</button>
+          ))}
+        </div>
+        <div style={{fontSize:".64rem",color:"var(--tx5)",marginBottom:".3rem",textTransform:"uppercase",letterSpacing:".04em"}}>Telas liberadas (De: tela ▸ Para: acesso)</div>
         <div style={{display:"grid",gridTemplateColumns:"1fr",gap:".4rem"}}>
           {PERM_MODULES.map(mod=>{
             const perms=editing.permissions||{};
@@ -4103,12 +4139,22 @@ export default function App(){
             return(
               <label key={mod.id} style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:".5rem",cursor:"pointer",background:on?"#8b44f012":"var(--pill)",border:`1px solid ${on?"#8b44f040":"var(--bdr2)"}`,borderRadius:".5rem",padding:".5rem .75rem"}}>
                 <span style={{fontSize:".8rem",fontWeight:600,color:on?"var(--tx2)":"var(--tx5)"}}>{mod.l}</span>
-                <input type="checkbox" checked={on} onChange={e=>setEditing(v=>({...v,permissions:{...(v.permissions||{}),[mod.id]:e.target.checked}}))} style={{width:18,height:18,accentColor:"#8b44f0",flexShrink:0}}/>
+                <span style={{display:"flex",alignItems:"center",gap:".45rem"}}>
+                  <span style={{fontSize:".64rem",fontWeight:700,color:on?"#10b981":"var(--tx6)"}}>{on?"LIBERADO":"BLOQUEADO"}</span>
+                  <input type="checkbox" checked={on} onChange={e=>setEditing(v=>({...v,permissions:{...(v.permissions||{}),[mod.id]:e.target.checked}}))} style={{width:18,height:18,accentColor:"#8b44f0",flexShrink:0}}/>
+                </span>
               </label>
             );
           })}
         </div>
-        <div style={{fontSize:".66rem",color:"var(--tx6)",marginTop:".5rem"}}>Config fica sempre exclusivo de administradores. Desmarque para ocultar a tela do menu deste usuário.</div>
+        <div style={{fontSize:".64rem",color:"var(--tx5)",margin:".6rem 0 .3rem",textTransform:"uppercase",letterSpacing:".04em"}}>Permissão especial</div>
+        {(()=>{const cd=!!(editing.permissions||{}).candelete;return(
+          <label style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:".5rem",cursor:"pointer",background:cd?"#f5656512":"var(--pill)",border:`1px solid ${cd?"#f5656540":"var(--bdr2)"}`,borderRadius:".5rem",padding:".5rem .75rem"}}>
+            <span style={{fontSize:".8rem",fontWeight:600,color:cd?"#f56565":"var(--tx3)"}}>🗑️ Pode excluir registros do sistema</span>
+            <input type="checkbox" checked={cd} onChange={e=>setEditing(v=>({...v,permissions:{...(v.permissions||{}),candelete:e.target.checked}}))} style={{width:18,height:18,accentColor:"#f56565",flexShrink:0}}/>
+          </label>
+        );})()}
+        <div style={{fontSize:".66rem",color:"var(--tx6)",marginTop:".5rem"}}>Config é sempre exclusivo de administradores. Sem "pode excluir", os botões de exclusão ficam ocultos para este usuário.</div>
       </div>}
       <div style={{borderTop:"1px solid var(--bdr)",paddingTop:".8rem",marginBottom:".8rem"}}>
         <div style={{fontSize:".7rem",color:"#4f5ef0",marginBottom:".6rem",display:"flex",gap:".3rem",alignItems:"center"}}><Ic n="key" s={12}/>Nova senha (vazio = manter atual)</div>
@@ -4984,7 +5030,7 @@ export default function App(){
                   <div style={{display:"flex",gap:".25rem"}}>
                     <button onClick={()=>advanceTreatment(t)} title="Comprou - reagendar" style={{background:"#10b98120",border:"none",borderRadius:".35rem",padding:".3rem .5rem",color:"#10b981",cursor:"pointer",fontSize:".7rem",fontWeight:600}}>✓ Comprou</button>
                     <button onClick={()=>setEditingTreatment(t)} style={{background:"none",border:"none",color:"#4f5ef0",cursor:"pointer",padding:".3rem"}}><Ic n="edit" s={13}/></button>
-                    <button onClick={()=>delTreatment(t.id)} style={{background:"none",border:"none",color:"var(--tx6)",cursor:"pointer",padding:".3rem"}}><Ic n="trash" s={13}/></button>
+                    {canDelete&&<button onClick={()=>delTreatment(t.id)} style={{background:"none",border:"none",color:"var(--tx6)",cursor:"pointer",padding:".3rem"}}><Ic n="trash" s={13}/></button>}
                   </div>
                 </div>
               </div>
