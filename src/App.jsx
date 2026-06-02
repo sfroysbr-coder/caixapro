@@ -2,9 +2,9 @@ import React,{useState,useEffect,useCallback,useMemo}from"react";
 import{supabase}from"./supabase";
 
 //  HELPERS 
-const fmt=v=>new Intl.NumberFormat("pt-BR",{style:"currency",currency:"BRL"}).format(v||0);
-const fmtN=v=>new Intl.NumberFormat("pt-BR").format(v||0);
-const fmtPct=v=>`${(v||0).toFixed(1)}%`;
+const fmt=v=>new Intl.NumberFormat("pt-BR",{style:"currency",currency:"BRL"}).format(Number(v)||0);
+const fmtN=v=>new Intl.NumberFormat("pt-BR").format(Number(v)||0);
+const fmtPct=v=>`${(Number(v)||0).toFixed(1)}%`;
 const uid=()=>Math.random().toString(36).slice(2,10);
 const today=()=>new Date().toLocaleDateString("pt-BR");
 const nowISO=()=>new Date().toISOString();
