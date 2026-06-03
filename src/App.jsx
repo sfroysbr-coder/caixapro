@@ -466,6 +466,14 @@ function Analytics({onClose,sales,cashTx,products,clients,dark,receivables=[],or
   const aPagarOpen=(payables||[]).filter(p=>!p.paid).reduce((a,p)=>a+(parseFloat(p.value)||0),0)+(orders||[]).filter(o=>o.status==="pendente"||o.status==="parcial").reduce((a,o)=>a+(parseFloat(o.remaining_value)||0),0);
   const saldoCaixaTot=(cashTx||[]).reduce((a,t)=>a+(t.type==="entrada"?(parseFloat(t.value)||0):-(parseFloat(t.value)||0)),0);
   const saldoProj=saldoCaixaTot+aReceberOpen-aPagarOpen;
+  // Prejuízo real de um pedido perdido = tudo que foi pago − valor das mercadorias recebidas (a custo).
+  // As unidades recebidas ficam no estoque (recuperáveis na venda); a perda é só a parte sem contrapartida.
+  const orderLoss=(o)=>{
+    const paid=(parseFloat(o.initial_value)||0)+(parseFloat(o.remaining_paid)||0);
+    let received=0;
+    try{JSON.parse(o.items||"[]").forEach(it=>{received+=(parseFloat(it.received_qty)||0)*(parseFloat(it.unit_cost)||0);});}catch(e){}
+    return Math.max(0,paid-received);
+  };
 
   const RANGES=[{k:"1d",l:"Hoje"},{k:"7d",l:"7 dias"},{k:"30d",l:"30 dias"},{k:"3m",l:"3 meses"},{k:"6m",l:"6 meses"},{k:"12m",l:"12 meses"},{k:"custom",l:"Personalizado"}];
   const PCOLS=["#f59e0b","#9ca3af","#cd7c2f","#4f5ef0","#10b981","#8b44f0","#f56565","#0891b2"];
@@ -592,7 +600,7 @@ function Analytics({onClose,sales,cashTx,products,clients,dark,receivables=[],or
             {l:"A pagar (restante)",v:fmt((orders||[]).filter(o=>o.status==="pendente").reduce((a,o)=>a+o.remaining_value,0)),c:"#f56565"},
             {l:"Pedidos recebidos",v:(orders||[]).filter(o=>o.status==="recebido").length+" pedido(s)",c:"#10b981"},
             {l:"Total investido",v:fmt((orders||[]).reduce((a,o)=>a+(o.initial_value||0)+(o.remaining_paid||0),0)),c:"#4f5ef0"},
-            {l:"💀 Perdas (sinais perdidos)",v:fmt((orders||[]).filter(o=>o.status==="perdido").reduce((a,o)=>a+o.initial_value,0)),c:"#f56565"},
+            {l:"💀 Prejuízo (pago − recebido)",v:fmt((orders||[]).filter(o=>o.status==="perdido").reduce((a,o)=>a+orderLoss(o),0)),c:"#f56565"},
           ]},
         ].map(block=>(
           <div key={block.title} style={{background:"var(--acard)",border:"1px solid var(--abdr)",borderRadius:".75rem",padding:"1rem"}}>
@@ -1471,12 +1479,25 @@ export default function App(){
   };
 
   const markOrderLost=async(order)=>{
+    const items=(()=>{try{return JSON.parse(order.items||"[]");}catch(e){return [];}})();
+    let totRec=0,totMiss=0,recVal=0;
+    items.forEach(it=>{const o=parseFloat(it.qty)||0;const r=parseFloat(it.received_qty)||0;totRec+=r;totMiss+=Math.max(0,o-r);recVal+=r*(parseFloat(it.unit_cost)||0);});
+    const pago=(parseFloat(order.initial_value)||0)+(parseFloat(order.remaining_paid)||0);
+    const prejuizo=Math.max(0,pago-recVal);
+    if(!window.confirm(
+      "Marcar o pedido de "+(order.supplier_name||"fornecedor")+" como PERDIDO?\n\n"+
+      "• "+totRec+" unidade(s) já recebida(s) PERMANECEM no estoque ("+fmt(recVal)+").\n"+
+      "• "+fmt(pago)+" já pago(s) PERMANECE(m) registrado(s) no caixa.\n"+
+      "• "+totMiss+" unidade(s) que faltavam serão dadas como PERDIDAS (não serão recebidas nem pagas).\n\n"+
+      "➡️ Prejuízo estimado: "+fmt(prejuizo)+" (o que foi pago além do valor já recebido).\n\n"+
+      "O pedido sai da lista de contas a pagar. Deseja continuar?"
+    )) return;
     try{
       await supabase.from("orders").update({
         status:"perdido",
-        notes:(order.notes?order.notes+" | ":"")+"PERDIDO em "+today(),
+        notes:(order.notes?order.notes+" | ":"")+"PERDIDO em "+today()+" · recebidas "+totRec+", perdidas "+totMiss+" · prejuízo "+fmt(prejuizo),
       }).eq("id",order.id);
-      toast$("⚠️ Pedido marcado como perdido · Sinal de "+fmt(order.initial_value)+" registrado como perda","#f59e0b");
+      toast$("💀 Pedido perdido · prejuízo de "+fmt(prejuizo)+". "+totRec+" un. mantidas no estoque.","#f59e0b");
     }catch(ex){toast$("Erro: "+ex.message,"#f56565");}
   };
 
