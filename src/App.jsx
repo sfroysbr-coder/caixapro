@@ -884,6 +884,9 @@ export default function App(){
     due_date:o.expected_date||null,paid:false
   })),[orders]);
 
+  // Detecta pedidos antigos com recebimento parcial gravado como concluído (para mostrar o botão de correção)
+  const needsPartialFix=useMemo(()=>(orders||[]).some(o=>{try{return JSON.parse(o.items||"[]").some(it=>it.received===true&&(parseFloat(it.received_qty)||0)>0&&(parseFloat(it.received_qty)||0)<(parseFloat(it.qty)||0));}catch(e){return false;}}),[orders]);
+
   // Sale handlers
   //  CART HELPERS 
   const cartSetProd=(key,pid)=>{
@@ -1294,12 +1297,16 @@ export default function App(){
       for(const {index,qty,item} of checkedItems){
         const prod=products.find(p=>p.id===item.product_id||p.name===item.product_name);
         if(prod&&qty>0){
-          // Adiciona estoque direto no produto recebido
+          // Adiciona ao estoque a quantidade que chegou agora
           await restoreStock(prod.id,qty);
           receivedNames.push(item.product_name+" ("+qty+")");
         }
-        // Marcar item como recebido no JSON
-        allItems[index]={...allItems[index],received:true,received_qty:qty,received_date:today()};
+        // Acumula a quantidade recebida; só conclui a linha quando chega tudo
+        const ordered=parseFloat(allItems[index].qty)||0;
+        const prevRecv=parseFloat(allItems[index].received_qty)||0;
+        const newRecv=prevRecv+qty;
+        const fully=newRecv>=ordered;
+        allItems[index]={...allItems[index],received:fully,received_qty:newRecv,received_date:fully?today():(allItems[index].received_date||null)};
       }
       // 2. Verificar se TODOS os itens foram recebidos
       const allReceived=allItems.every(i=>i.received);
@@ -1477,15 +1484,13 @@ export default function App(){
     if(!window.confirm('Excluir pedido de '+order.supplier_name+'? Todo o fluxo será revertido.'))return;
     const items=JSON.parse(order.items||"[]");
     try{
-      // 1. Reverter estoque APENAS dos itens efetivamente recebidos
+      // 1. Reverter estoque pela quantidade efetivamente recebida (parcial ou total)
       if(order.status==="recebido"||order.status==="parcial"){
         for(const item of items){
-          // Só reverte se o item foi marcado como recebido
-          if(!item.received)continue;
-          const qtyToRevert=item.received_qty||item.qty;
-          const prod=products.find(p=>p.id===item.product_id||p.name===item.product_name);
+          const qtyToRevert=parseFloat(item.received_qty)||0;
+          if(qtyToRevert<=0)continue;
           const oid=item.product_id||(products.find(p=>p.name===item.product_name)?.id);
-          if(oid&&qtyToRevert>0)await deductStock(oid,qtyToRevert);
+          if(oid)await deductStock(oid,qtyToRevert);
         }
       }
       // 2. Reverter TODOS os pagamentos lançados no caixa (sinal + recebimentos)
@@ -1494,12 +1499,39 @@ export default function App(){
       await supabase.from("orders").delete().eq("id",order.id);
 
       // 4. Feedback detalhado
-      const recItems=items.filter(i=>i.received);
+      const recItems=items.filter(i=>(parseFloat(i.received_qty)||0)>0);
       const totalPaid=(order.initial_value||0)+(order.remaining_paid||0);
       let msg="🔄 Pedido excluído";
       if(recItems.length>0)msg+=" · "+recItems.length+" item(s) removido(s) do estoque";
       if(totalPaid>0)msg+=" · "+fmt(totalPaid)+" revertido(s) do caixa";
       toast$(msg,"#f59e0b");
+    }catch(ex){toast$("Erro: "+ex.message,"#f56565");}
+  };
+
+  // Corrige pedidos antigos: reabre linhas que receberam parcial mas foram marcadas como concluídas.
+  // Mantém a quantidade já recebida (estoque NÃO é alterado); só o saldo restante volta a ficar disponível.
+  const fixPartialOrders=async()=>{
+    if(!isAdmin){toast$("Apenas administradores podem corrigir pedidos.","#f56565");return;}
+    let affectedOrders=0,affectedItems=0;const updates=[];const nomes=[];
+    for(const o of (orders||[])){
+      let items;try{items=JSON.parse(o.items||"[]");}catch(e){continue;}
+      let changed=false;
+      items=items.map(it=>{
+        const ordered=parseFloat(it.qty)||0;const recv=parseFloat(it.received_qty)||0;
+        if(it.received===true&&recv>0&&recv<ordered){changed=true;affectedItems++;return{...it,received:false};}
+        return it;
+      });
+      if(changed){
+        affectedOrders++;if(o.supplier_name)nomes.push(o.supplier_name);
+        const allRec=items.every(i=>i.received);
+        updates.push({id:o.id,items:JSON.stringify(items),status:allRec?"recebido":"parcial",received_date:allRec?(o.received_date||today()):null});
+      }
+    }
+    if(affectedOrders===0){toast$("✅ Nenhum pedido antigo precisa de correção.");return;}
+    if(!window.confirm("Encontrei "+affectedItems+" item(ns) em "+affectedOrders+" pedido(s)"+(nomes.length?" ("+[...new Set(nomes)].join(", ")+")":"")+" que receberam quantidade PARCIAL mas foram marcados como concluídos.\n\nReabrir o saldo restante desses itens?\n\n• O estoque já lançado NÃO será alterado.\n• Só o saldo que ainda falta volta a ficar disponível para receber.")) return;
+    try{
+      for(const u of updates){await supabase.from("orders").update({items:u.items,status:u.status,received_date:u.received_date}).eq("id",u.id);}
+      toast$("✅ "+affectedItems+" item(ns) reaberto(s) em "+affectedOrders+" pedido(s). Saldo restante disponível para receber.");
     }catch(ex){toast$("Erro: "+ex.message,"#f56565");}
   };
 
@@ -2924,6 +2956,7 @@ export default function App(){
               <h2 style={{fontFamily:"'Syne',sans-serif",fontWeight:800,fontSize:"1rem",color:"var(--tx)"}}>📦 Pedidos de Compra</h2>
               <div style={{display:"flex",gap:".4rem",flexWrap:"wrap"}}>
                 <XBtn rows={orders.map(o=>({Data:o.order_date,Fornecedor:o.supplier_name,Status:o.status,Total:fmt(o.total_value),"Sinal (%)":o.initial_pct+"%","Sinal R$":fmt(o.initial_value),Restante:fmt(o.remaining_value),Recebimento:o.received_date||"—"}))} name="pedidos-caixapro" sheet="Pedidos"/>
+                {isAdmin&&needsPartialFix&&<Btn sm v="ghost" onClick={fixPartialOrders} title="Reabre o saldo de pedidos antigos recebidos parcialmente">🔧 Corrigir parciais</Btn>}
                 <Btn sm onClick={()=>setShowOrderModal(true)}><Ic n="plus" s={12}/>Pedido de Compra</Btn>
               </div>
             </div>
@@ -3013,7 +3046,9 @@ export default function App(){
                             <div style={{display:"flex",alignItems:"center",gap:".4rem"}}>
                               {it.received
                                 ?<span style={{fontSize:".65rem",color:"#10b981",background:"#10b98115",borderRadius:"99px",padding:".08rem .4rem",border:"1px solid #10b98130",flexShrink:0}}>✅ {it.received_qty||it.qty}</span>
-                                :<span style={{fontSize:".65rem",color:"#f59e0b",background:"#f59e0b15",borderRadius:"99px",padding:".08rem .4rem",border:"1px solid #f59e0b30",flexShrink:0}}>⏳ aguardando</span>
+                                :(parseFloat(it.received_qty)||0)>0
+                                  ?<span style={{fontSize:".65rem",color:"#f59e0b",background:"#f59e0b15",borderRadius:"99px",padding:".08rem .4rem",border:"1px solid #f59e0b30",flexShrink:0,fontWeight:700}}>📦 {it.received_qty}/{it.qty}</span>
+                                  :<span style={{fontSize:".65rem",color:"#f59e0b",background:"#f59e0b15",borderRadius:"99px",padding:".08rem .4rem",border:"1px solid #f59e0b30",flexShrink:0}}>⏳ aguardando</span>
                               }
                               <span style={{color:it.received?"var(--tx5)":"var(--tx3)",textDecoration:it.received?"line-through":""}}>{it.product_name} × {it.qty} {it.unit}</span>
                             </div>
@@ -4551,7 +4586,7 @@ export default function App(){
       const pendingItems=allItems.map((it,i)=>({...it,_idx:i})).filter(it=>!it.received);
       const checkedList=Object.entries(receiveChecked)
         .filter(([,v])=>v&&v.checked)
-        .map(([k,v])=>{const idx=parseInt(k);const it=allItems[idx];if(!it)return null;const q=parseInt(v.qty)||it.qty||1;return{index:idx,qty:q,item:it};})
+        .map(([k,v])=>{const idx=parseInt(k);const it=allItems[idx];if(!it)return null;const rem=(parseFloat(it.qty)||0)-(parseFloat(it.received_qty)||0);const q=Math.min(rem||1,Math.max(1,parseInt(v.qty)||rem||1));return{index:idx,qty:q,item:it};})
         .filter(Boolean);
       const selectedTotal=checkedList.reduce((a,{item,qty})=>a+(parseFloat(item?.unit_cost||item?.unit_price||0)*qty),0);
       const orderTotal=parseFloat(showReceiveModal.total_value)||0;
@@ -4570,7 +4605,7 @@ export default function App(){
               <span>Selecione os produtos recebidos</span>
               <button onClick={()=>{
                 const newChecked={};
-                pendingItems.forEach(it=>{newChecked[it._idx]={checked:true,qty:it.qty};});
+                pendingItems.forEach(it=>{const rem=(parseFloat(it.qty)||0)-(parseFloat(it.received_qty)||0);newChecked[it._idx]={checked:true,qty:rem>0?rem:1};});
                 setReceiveChecked(newChecked);
               }} style={{fontSize:".65rem",color:"#4f5ef0",background:"#4f5ef015",border:"1px solid #4f5ef030",borderRadius:".3rem",padding:".15rem .5rem",cursor:"pointer",fontFamily:"'DM Sans',sans-serif",fontWeight:600}}>Todos</button>
             </div>
@@ -4578,12 +4613,16 @@ export default function App(){
             <div style={{display:"grid",gap:".45rem",maxHeight:"45vh",overflowY:"auto",paddingRight:".3rem"}}>
               {allItems.map((it,i)=>{
                 const isRec=it.received;
-                const ch=receiveChecked[i]||{checked:false,qty:it.qty};
+                const ordered=parseFloat(it.qty)||0;
+                const recv=parseFloat(it.received_qty)||0;
+                const remaining=Math.max(0,ordered-recv);
+                const ch=receiveChecked[i]||{checked:false,qty:remaining||1};
+                const partial=!isRec&&recv>0;
                 return(
-                  <div key={i} style={{display:"grid",gridTemplateColumns:"auto 1fr auto auto",gap:".6rem",alignItems:"center",padding:".6rem .85rem",borderRadius:".55rem",border:"1px solid "+(isRec?"#10b98130":ch.checked?"#4f5ef040":"var(--bdr)"),background:isRec?"#10b98108":ch.checked?"#4f5ef008":"transparent",transition:"all .2s"}}>
+                  <div key={i} style={{display:"grid",gridTemplateColumns:"auto 1fr auto auto",gap:".6rem",alignItems:"center",padding:".6rem .85rem",borderRadius:".55rem",border:"1px solid "+(isRec?"#10b98130":partial?"#f59e0b40":ch.checked?"#4f5ef040":"var(--bdr)"),background:isRec?"#10b98108":partial?"#f59e0b08":ch.checked?"#4f5ef008":"transparent",transition:"all .2s"}}>
                     {/* Checkbox */}
                     <button
-                      onClick={()=>{if(!isRec)setReceiveChecked(prev=>({...prev,[i]:{...prev[i],checked:!ch.checked,qty:prev[i]?.qty||it.qty}}));}}
+                      onClick={()=>{if(!isRec)setReceiveChecked(prev=>({...prev,[i]:{...prev[i],checked:!ch.checked,qty:prev[i]?.qty||remaining||1}}));}}
                       disabled={isRec}
                       style={{width:22,height:22,borderRadius:".35rem",border:"2px solid "+(isRec?"#10b98160":ch.checked?"#4f5ef0":"var(--bdr2)"),background:isRec?"#10b98120":ch.checked?"#4f5ef0":"transparent",display:"flex",alignItems:"center",justifyContent:"center",cursor:isRec?"default":"pointer",flexShrink:0,transition:"all .2s"}}
                     >
@@ -4592,24 +4631,24 @@ export default function App(){
                     {/* Produto info */}
                     <div>
                       <div style={{fontSize:".83rem",fontWeight:600,color:isRec?"var(--tx5)":"var(--tx)",textDecoration:isRec?"line-through":""}}>{it.product_name}</div>
-                      <div style={{fontSize:".67rem",color:"var(--sub)"}}>{fmt(it.unit_cost)}/un · Total: {fmt(it.total)}</div>
+                      <div style={{fontSize:".67rem",color:"var(--sub)"}}>Pedido: {ordered} {it.unit} · {fmt(it.unit_cost)}/un{partial?" · já recebido "+recv+", faltam "+remaining:""}</div>
                     </div>
                     {/* Quantidade */}
                     {isRec?(
-                      <span style={{fontSize:".75rem",color:"#10b981",fontWeight:700,background:"#10b98115",borderRadius:"99px",padding:".15rem .55rem",border:"1px solid #10b98130",whiteSpace:"nowrap"}}>✅ {it.received_qty||it.qty} {it.unit}</span>
+                      <span style={{fontSize:".75rem",color:"#10b981",fontWeight:700,background:"#10b98115",borderRadius:"99px",padding:".15rem .55rem",border:"1px solid #10b98130",whiteSpace:"nowrap"}}>✅ {recv||ordered} {it.unit}</span>
                     ):(
                       <div style={{display:"flex",alignItems:"center",gap:".3rem"}}>
-                        <span style={{fontSize:".68rem",color:"var(--sub)"}}>Qtd:</span>
-                        <input type="number" min="1" max={it.qty} onFocus={e=>e.target.select()} value={ch.qty||it.qty}
-                          onChange={e=>setReceiveChecked(prev=>({...prev,[i]:{...prev[i],qty:Math.min(it.qty,Math.max(1,parseInt(e.target.value)||1)),checked:prev[i]?.checked||false}}))}
+                        <span style={{fontSize:".68rem",color:"var(--sub)"}}>Recebendo:</span>
+                        <input type="number" min="1" max={remaining} onFocus={e=>e.target.select()} value={ch.qty||remaining}
+                          onChange={e=>setReceiveChecked(prev=>({...prev,[i]:{...prev[i],qty:Math.min(remaining,Math.max(1,parseInt(e.target.value)||1)),checked:prev[i]?.checked||false}}))}
                           disabled={!ch.checked}
                           style={{width:55,background:"var(--inp)",border:"1px solid "+(ch.checked?"#4f5ef0":"var(--bdr2)"),borderRadius:".35rem",padding:".22rem .4rem",color:"var(--tx)",fontSize:".78rem",fontFamily:"'DM Sans',sans-serif",outline:"none",textAlign:"center",opacity:ch.checked?1:.5}}/>
-                        <span style={{fontSize:".68rem",color:"var(--sub)"}}>{it.unit}</span>
+                        <span style={{fontSize:".68rem",color:"var(--sub)"}}>/ {remaining} {it.unit}</span>
                       </div>
                     )}
                     {/* Valor */}
                     <span style={{fontSize:".8rem",fontWeight:700,color:isRec?"#10b981":ch.checked?"#4f5ef0":"var(--tx5)",fontFamily:"'Syne',sans-serif",minWidth:70,textAlign:"right"}}>
-                      {isRec?fmt(it.total):ch.checked?fmt(it.unit_cost*(ch.qty||it.qty)):"—"}
+                      {isRec?fmt(it.unit_cost*(recv||ordered)):ch.checked?fmt(it.unit_cost*(ch.qty||remaining)):"—"}
                     </span>
                   </div>
                 );
