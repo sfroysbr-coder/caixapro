@@ -1205,6 +1205,7 @@ export default function App(){
             id:uid(),supplier_id:sup?sup.id:null,supplier_name:cartSupplierName.trim(),status:"pendente",
             items:JSON.stringify(ordItems),total_value:ordTotal,initial_pct:0,initial_value:0,remaining_value:ordTotal,remaining_paid:0,
             notes:"🔄 Dropshipping · gerado da venda direta "+batchId.slice(0,8).toUpperCase(),
+            origin_sale_id:batchId,
             order_date:today(),added_by:cu.display_name,created_at:nowISO(),
           }]);
           await loadOrders();
@@ -1786,7 +1787,20 @@ export default function App(){
         await loadReceivables();
       }
 
-      // 7. Feedback completo
+      // 7. Reverter pedido(s) automático(s) gerados por esta venda direta (dropshipping)
+      let pedidosRevertidos=0;
+      const{data:linkedOrders}=await supabase.from("orders").select("id").eq("origin_sale_id",batchKey);
+      if(linkedOrders&&linkedOrders.length>0){
+        for(const o of linkedOrders){
+          // pedido dropship não mexeu no estoque; reverte só os pagamentos lançados no caixa e remove o pedido
+          await supabase.from("cash_transactions").delete().eq("sale_id",o.id);
+          await supabase.from("orders").delete().eq("id",o.id);
+          pedidosRevertidos++;
+        }
+        await loadOrders();
+      }
+
+      // 8. Feedback completo
       const nItens=batchSales.length;
       let msg="🔄 Venda excluída · Estoque revertido";
       if(parcelasRevertidas>0){
@@ -1795,6 +1809,7 @@ export default function App(){
           msg+=" (⚠️ "+parcelasPagas+" já havia"+(parcelasPagas>1?"m":"")+" sido recebida"+(parcelasPagas>1?"s":"")+")";
         }
       }
+      if(pedidosRevertidos>0)msg+=" · "+pedidosRevertidos+" pedido"+(pedidosRevertidos>1?"s":"")+" automático"+(pedidosRevertidos>1?"s":"")+" removido"+(pedidosRevertidos>1?"s":"");
       toast$(msg,"#f59e0b");
     }catch(ex){toast$("Erro ao excluir: "+ex.message,"#f56565");}
   };
