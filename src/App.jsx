@@ -12,6 +12,8 @@ const nowISO=()=>new Date().toISOString();
 const addBizDays=(n)=>{const d=new Date();let added=0;while(added<(parseInt(n)||0)){d.setDate(d.getDate()+1);const wd=d.getDay();if(wd!==0&&wd!==6)added++;}return d.toLocaleDateString("pt-BR");};
 // Mesma soma, mas devolve ISO YYYY-MM-DD (para campos due_date de recebíveis)
 const addBizDaysISO=(n)=>{const d=new Date();let added=0;while(added<(parseInt(n)||0)){d.setDate(d.getDate()+1);const wd=d.getDay();if(wd!==0&&wd!==6)added++;}return d.toISOString().slice(0,10);};
+// Lê com segurança os itens (JSON) de um pedido; nunca quebra a tela se o dado vier corrompido
+const parseItems=(o)=>{try{const v=JSON.parse((o&&o.items)||"[]");return Array.isArray(v)?v:[];}catch(e){return [];}};
 const hashPw=s=>btoa(unescape(encodeURIComponent(s+"|caixapro2026")));
 const calcM=(c,p)=>{const cv=parseFloat(c)||0,pv=parseFloat(p)||0;return{markup:cv>0?((pv-cv)/cv)*100:0,margin:pv>0?((pv-cv)/pv)*100:0,profit:pv-cv};};
 const daysUntil=d=>d?Math.ceil((new Date(d)-new Date())/86400000):null;
@@ -216,7 +218,7 @@ const XBtn=({rows,name,sheet})=><button onClick={()=>exportXLS(rows,name,sheet)}
 const exportOrderPDF=(order)=>{
   if(!window.jspdf){alert("Aguarde carregar a página.");return;}
   const{jsPDF}=window.jspdf;
-  const items=JSON.parse(order.items||"[]");
+  const items=parseItems(order);
   const doc=new jsPDF({orientation:"portrait",unit:"mm",format:"a4"});
   const W=210,margin=14;
   const fmt2=v=>new Intl.NumberFormat("pt-BR",{style:"currency",currency:"BRL"}).format(v||0);
@@ -477,7 +479,7 @@ function Analytics({onClose,sales,cashTx,products,clients,dark,receivables=[],or
   const orderLoss=(o)=>{
     const paid=(parseFloat(o.initial_value)||0)+(parseFloat(o.remaining_paid)||0);
     let received=0;
-    try{JSON.parse(o.items||"[]").forEach(it=>{received+=(parseFloat(it.received_qty)||0)*(parseFloat(it.unit_cost)||0);});}catch(e){}
+    try{parseItems(o).forEach(it=>{received+=(parseFloat(it.received_qty)||0)*(parseFloat(it.unit_cost)||0);});}catch(e){}
     return Math.max(0,paid-received);
   };
 
@@ -801,7 +803,7 @@ export default function App(){
   const addSplit=()=>setCartSplits(arr=>[...arr,newSplit()]);
   // legado (para editSale)
   const FS={product_id:"",product_name:"",client_id:"",client_name:"",quantity:"1",unit_price:"",total_price:"",notes:"",payment_method:"PIX"};
-  const FC={name:"",email:"",phone:"",notes:""};
+  const FC={name:"",email:"",phone:"",notes:"",credit_limit:""};
   const FU={username:"",display_name:"",role:"operator",password:"",password2:""};
   const FSup={name:"",contact:"",phone:"",email:"",notes:""};
   const FCash={description:"",value:"",type:"saida",category:"",product_id:"",quantity:"1"};
@@ -902,7 +904,7 @@ export default function App(){
   const canDelete=isAdmin||!!(cu?.permissions&&cu.permissions.candelete);
   // Pedidos a fornecedor (pendente/parcial) refletidos como contas a pagar futuras
   const orderPayables=useMemo(()=>(orders||[]).filter(o=>o.status!=="cancelado"&&o.status!=="perdido"&&((parseFloat(o.remaining_value)||0)-(parseFloat(o.remaining_paid)||0))>0.005).map(o=>{
-    let drop=false;try{drop=JSON.parse(o.items||"[]").some(i=>i.dropship);}catch(e){}
+    let drop=false;try{drop=parseItems(o).some(i=>i.dropship);}catch(e){}
     return {
       id:"ord_"+o.id,_order:true,_orderId:o.id,
       description:(drop?"🔄 Venda direta · ":"📦 Pedido · ")+(o.supplier_name||"fornecedor"),
@@ -914,7 +916,7 @@ export default function App(){
   }),[orders]);
 
   // Detecta pedidos antigos com recebimento parcial gravado como concluído (para mostrar o botão de correção)
-  const needsPartialFix=useMemo(()=>(orders||[]).some(o=>{try{return JSON.parse(o.items||"[]").some(it=>it.received===true&&(parseFloat(it.received_qty)||0)>0&&(parseFloat(it.received_qty)||0)<(parseFloat(it.qty)||0));}catch(e){return false;}}),[orders]);
+  const needsPartialFix=useMemo(()=>(orders||[]).some(o=>{try{return parseItems(o).some(it=>it.received===true&&(parseFloat(it.received_qty)||0)>0&&(parseFloat(it.received_qty)||0)<(parseFloat(it.qty)||0));}catch(e){return false;}}),[orders]);
 
   // Sale handlers
   //  CART HELPERS 
@@ -1355,7 +1357,7 @@ export default function App(){
       toast$("Selecione pelo menos 1 produto para receber.","#f56565");return;
     }
     const payVal=parseFloat(payment)||0;
-    const allItems=JSON.parse(order.items||"[]");
+    const allItems=parseItems(order);
     try{
       // 1. Dar entrada no estoque de cada item selecionado
       const receivedNames=[];
@@ -1538,7 +1540,7 @@ export default function App(){
   };
 
   const markOrderLost=async(order)=>{
-    const items=(()=>{try{return JSON.parse(order.items||"[]");}catch(e){return [];}})();
+    const items=(()=>{try{return parseItems(order);}catch(e){return [];}})();
     let totRec=0,totMiss=0,recVal=0;
     items.forEach(it=>{const o=parseFloat(it.qty)||0;const r=parseFloat(it.received_qty)||0;totRec+=r;totMiss+=Math.max(0,o-r);recVal+=r*(parseFloat(it.unit_cost)||0);});
     const pago=(parseFloat(order.initial_value)||0)+(parseFloat(order.remaining_paid)||0);
@@ -1562,7 +1564,7 @@ export default function App(){
 
   const deleteOrder=async(order)=>{
     if(!window.confirm('Excluir pedido de '+order.supplier_name+'? Todo o fluxo será revertido.'))return;
-    const items=JSON.parse(order.items||"[]");
+    const items=parseItems(order);
     try{
       // 1. Reverter estoque pela quantidade efetivamente recebida (parcial ou total)
       if(order.status==="recebido"||order.status==="parcial"){
@@ -1595,7 +1597,7 @@ export default function App(){
     if(!isAdmin){toast$("Apenas administradores podem corrigir pedidos.","#f56565");return;}
     let affectedOrders=0,affectedItems=0;const updates=[];const nomes=[];
     for(const o of (orders||[])){
-      let items;try{items=JSON.parse(o.items||"[]");}catch(e){continue;}
+      let items;try{items=parseItems(o);}catch(e){continue;}
       let changed=false;
       items=items.map(it=>{
         const ordered=parseFloat(it.qty)||0;const recv=parseFloat(it.received_qty)||0;
@@ -1659,6 +1661,74 @@ export default function App(){
     await supabase.from("receivables").insert([{id:uid(),client_id:recForm.client_id||null,client_name:recForm.client_name||null,description:recForm.description,value:parseFloat(recForm.value),due_date:recForm.due_date||null,paid:false,parent_product_id:pf.parent_product_id||null,qty_per_parent:parseFloat(pf.qty_per_parent)||1,total_mg:parseFloat(pf.total_mg)||null,dose_mg:parseFloat(pf.dose_mg)||null,added_by:cu.display_name,created_at:nowISO()}]);
     setRecForm({client_id:"",client_name:"",description:"",value:"",due_date:""});
     loadReceivables();toast$("Conta registrada!");
+  };
+  // Lembrete de cobrança via WhatsApp (usa o telefone do cliente, se houver)
+  // Situação financeira do cliente: saldo em aberto, atrasos atuais e pontualidade histórica
+  const clientFin=(cid,cname)=>{
+    const recs=(receivables||[]).filter(r=>(cid&&r.client_id===cid)||(cname&&r.client_name===cname));
+    const aberto=recs.filter(r=>!r.paid).reduce((a,r)=>a+(parseFloat(r.value)||0),0);
+    const vencidasAbertas=recs.filter(r=>!r.paid&&r.due_date&&new Date(r.due_date)<new Date()).length;
+    const pagas=recs.filter(r=>r.paid);
+    const paidLate=pagas.filter(r=>{if(!r.paid_date||!r.due_date)return false;const pp=String(r.paid_date).split("/");if(pp.length!==3)return false;const pd=new Date(+pp[2],+pp[1]-1,+pp[0]);return pd>new Date(r.due_date+"T23:59:59");}).length;
+    const pontualidade=pagas.length>0?((pagas.length-paidLate)/pagas.length)*100:null;
+    return {aberto,vencidasAbertas,pagas:pagas.length,paidLate,pontualidade};
+  };
+  // Backup completo: baixa todos os dados num único arquivo JSON
+  const exportBackup=()=>{
+    try{
+      const data={app:"CaixaPro",version:"7.0",exported_at:new Date().toISOString(),
+        sales,products,orders,receivables,payables,clients,suppliers,cash:cashTx,
+        settings:{company:companyInfo,payments:dynPays,paysettle:dynSettle,cardtaxes:cardTaxes,frete:freteConfig}};
+      const blob=new Blob([JSON.stringify(data,null,2)],{type:"application/json"});
+      const url=URL.createObjectURL(blob);
+      const a=document.createElement("a");a.href=url;a.download="caixapro-backup-"+new Date().toISOString().slice(0,10)+".json";document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1500);
+      const tot=(sales||[]).length+(products||[]).length+(orders||[]).length+(receivables||[]).length+(payables||[]).length+(clients||[]).length+(cashTx||[]).length;
+      toast$("✅ Backup gerado ("+tot+" registros). Guarde o arquivo em local seguro.");
+    }catch(ex){toast$("Erro ao gerar backup: "+ex.message,"#f56565");}
+  };
+  // Recibo / Promissória em PDF a partir de uma conta a receber (fiado)
+  const exportReceivablePDF=(rec)=>{
+    if(!window.jspdf){toast$("Aguarde a página carregar e tente de novo.","#f59e0b");return;}
+    const{jsPDF}=window.jspdf;
+    const doc=new jsPDF({orientation:"portrait",unit:"mm",format:"a4"});
+    const W=210,m=18;let y=22;
+    const money=v=>new Intl.NumberFormat("pt-BR",{style:"currency",currency:"BRL"}).format(v||0);
+    const cli=clients.find(c=>c.id===rec.client_id||c.name===rec.client_name);
+    const venc=rec.due_date?new Date(rec.due_date+"T00:00:00").toLocaleDateString("pt-BR"):"à vista";
+    const empresa=(companyInfo&&companyInfo.name)||"CaixaPro · Tirzepatida";
+    doc.setFont("helvetica","bold");doc.setFontSize(13);doc.setTextColor(40,40,40);doc.text(empresa,m,y);y+=5;
+    doc.setFont("helvetica","normal");doc.setFontSize(9);doc.setTextColor(110,110,110);
+    const infoLine=[companyInfo&&companyInfo.cnpj?"CNPJ: "+companyInfo.cnpj:"",companyInfo&&companyInfo.phone?companyInfo.phone:"",companyInfo&&companyInfo.address?companyInfo.address:""].filter(Boolean).join("   ·   ");
+    if(infoLine){doc.text(infoLine,m,y);y+=5;}
+    y+=2;doc.setDrawColor(210);doc.line(m,y,W-m,y);y+=11;
+    doc.setFont("helvetica","bold");doc.setFontSize(17);doc.setTextColor(30,30,30);doc.text("RECIBO / PROMISSÓRIA",W/2,y,{align:"center"});y+=10;
+    doc.setDrawColor(180);doc.setFillColor(245,245,245);doc.roundedRect(m,y,W-2*m,20,2,2,"FD");
+    doc.setFont("helvetica","normal");doc.setFontSize(8);doc.setTextColor(120,120,120);
+    doc.text("VALOR",m+6,y+7);doc.text("VENCIMENTO",W/2-10,y+7);doc.text("Nº",W-m-34,y+7);
+    doc.setFont("helvetica","bold");doc.setFontSize(13);doc.setTextColor(30,30,30);
+    doc.text(money(rec.value),m+6,y+15);doc.text(venc,W/2-10,y+15);doc.text((rec.id||"").slice(0,8).toUpperCase(),W-m-34,y+15);
+    y+=30;
+    doc.setFont("helvetica","normal");doc.setFontSize(11);doc.setTextColor(40,40,40);
+    const devedor=rec.client_name||"__________________________";
+    const corpo="Eu, "+devedor+", reconheço dever e prometo pagar a "+empresa+", ou à sua ordem, a quantia de "+money(rec.value)+", referente a \u201C"+(rec.description||"venda")+"\u201D, com vencimento em "+venc+".";
+    const linhas=doc.splitTextToSize(corpo,W-2*m);doc.text(linhas,m,y);y+=linhas.length*6+10;
+    doc.setFontSize(10);doc.setTextColor(80,80,80);
+    doc.text("Devedor(a): "+(rec.client_name||"—")+(cli&&cli.phone?"     Tel: "+cli.phone:""),m,y);y+=16;
+    doc.text("Local e data: ____________________________, "+new Date().toLocaleDateString("pt-BR"),m,y);y+=22;
+    doc.setDrawColor(120);doc.line(m+22,y,W-m-22,y);y+=5;
+    doc.setFontSize(10);doc.setTextColor(60,60,60);doc.text(rec.client_name||"Assinatura do(a) devedor(a)",W/2,y,{align:"center"});
+    doc.setFontSize(8);doc.setTextColor(150,150,150);doc.text(empresa+" · Documento gerado em "+new Date().toLocaleString("pt-BR"),W/2,287,{align:"center"});
+    doc.save("promissoria-"+String(rec.client_name||"cliente").replace(/\s+/g,"_")+"-"+(rec.id||"").slice(0,6)+".pdf");
+    toast$("📄 Recibo/promissória gerado em PDF.");
+  };
+  const cobrarWhatsApp=(r)=>{
+    const cli=clients.find(c=>c.id===r.client_id||c.name===r.client_name);
+    let digits=((cli&&cli.phone)||"").replace(/\D/g,"");
+    if(digits.length>0&&digits.length<=11)digits="55"+digits;
+    const venc=r.due_date?new Date(r.due_date+"T00:00:00").toLocaleDateString("pt-BR"):"";
+    const ov=r.due_date&&new Date(r.due_date)<new Date();
+    const msg="Olá"+(r.client_name?" "+r.client_name:"")+"! "+(ov?"Passando para lembrar que ":"Lembrete amigável: ")+"o valor de "+fmt(r.value)+" referente a “"+r.description+"”"+(venc?(ov?" venceu em "+venc:" vence em "+venc):"")+". "+(ov?"Consegue me confirmar quando puder acertar? Obrigado!":"Qualquer dúvida, estou à disposição. Obrigado!");
+    window.open("https://wa.me/"+digits+"?text="+encodeURIComponent(msg),"_blank");
   };
   const payReceivable=async(id)=>{
     const rec=receivables.find(r=>r.id===id);
@@ -1733,7 +1803,7 @@ export default function App(){
     loadPayables();toast$("Conta removida.","#f59e0b");
   };
   const saveClient=async()=>{
-    await supabase.from("clients").update({name:editing.name,email:editing.email,phone:editing.phone,notes:editing.notes,dose:editing.dose||null,interval_days:parseInt(editing.interval_days)||7,treatment_start:editing.treatment_start||null,treatment_notes:editing.treatment_notes||null}).eq("id",editing.id);
+    await supabase.from("clients").update({name:editing.name,email:editing.email,phone:editing.phone,notes:editing.notes,credit_limit:parseFloat(editing.credit_limit)||0,dose:editing.dose||null,interval_days:parseInt(editing.interval_days)||7,treatment_start:editing.treatment_start||null,treatment_notes:editing.treatment_notes||null}).eq("id",editing.id);
     toast$("Cliente atualizado!");setModal(null);setEditing(null);
   };
 
@@ -1875,7 +1945,7 @@ export default function App(){
   const addClient=async()=>{
     if(!cf.name){toast$("Nome é obrigatório.","#f56565");return;}
     try{
-      const{error:e}=await supabase.from("clients").insert([{id:uid(),name:cf.name,email:cf.email||null,phone:cf.phone||null,notes:cf.notes||null,added_by:cu.display_name}]);
+      const{error:e}=await supabase.from("clients").insert([{id:uid(),name:cf.name,email:cf.email||null,phone:cf.phone||null,notes:cf.notes||null,credit_limit:parseFloat(cf.credit_limit)||0,added_by:cu.display_name}]);
       if(e){toast$("Erro ao salvar: "+e.message,"#f56565");return;}
       toast$("Cliente cadastrado!");setModal(null);setCf(FC);
     }catch(ex){toast$("Erro de conexão.","#f56565");}
@@ -2139,7 +2209,7 @@ export default function App(){
             const pedPend=(orders||[]).filter(o=>o.status==="pendente"||o.status==="parcial");
             const perdidos=(orders||[]).filter(o=>o.status==="perdido");
             if(pedPend.length===0&&perdidos.length===0)return null;
-            const allItems=pedPend.flatMap(o=>JSON.parse(o.items||"[]"));
+            const allItems=pedPend.flatMap(o=>parseItems(o));
             const prodMap={};
             allItems.forEach(i=>{prodMap[i.product_name]=(prodMap[i.product_name]||0)+i.qty;});
             return(
@@ -2412,7 +2482,7 @@ export default function App(){
         {/* ══════════ FINANCEIRO — sub-navegação ══════════ */}
         {tab==="financeiro"&&(
           <div style={{display:"flex",gap:".4rem",flexWrap:"wrap",marginBottom:"1rem",borderBottom:"1px solid var(--bdr)",paddingBottom:".75rem"}}>
-            {[{id:"resumo",l:"📊 Resumo"},{id:"saude",l:"💚 Saúde"},{id:"receber",l:"💰 A Receber"},{id:"pagar",l:"📄 A Pagar"},{id:"caixa",l:"💵 Caixa"},{id:"cartao",l:"💳 Taxas Cartão"}].map(g=>(
+            {[{id:"resumo",l:"📊 Resumo"},{id:"projecao",l:"📈 Projeção"},{id:"saude",l:"💚 Saúde"},{id:"receber",l:"💰 A Receber"},{id:"pagar",l:"📄 A Pagar"},{id:"caixa",l:"💵 Caixa"},{id:"cartao",l:"💳 Taxas Cartão"}].map(g=>(
               <button key={g.id} onClick={()=>setFinTab(g.id)} style={{padding:".42rem .85rem",borderRadius:".5rem",fontSize:".78rem",fontFamily:"'DM Sans',sans-serif",fontWeight:600,border:"none",cursor:"pointer",background:finTab===g.id?"linear-gradient(135deg,#4f5ef0,#8b44f0)":"var(--pill)",color:finTab===g.id?"#fff":"var(--navoff)",transition:"all .2s",whiteSpace:"nowrap"}}>{g.l}</button>
             ))}
           </div>
@@ -2470,6 +2540,58 @@ export default function App(){
           );
         })()}
 
+        {/* ══ FINANCEIRO · PROJEÇÃO DE FLUXO DE CAIXA NO TEMPO ══ */}
+        {tab==="financeiro"&&finTab==="projecao"&&(()=>{
+          const hoje=new Date();hoje.setHours(0,0,0,0);
+          const dias=(dateStr)=>{if(!dateStr)return 0;const d=new Date(dateStr+(dateStr.length<=10?"T00:00:00":""));if(isNaN(d))return 0;return Math.floor((d-hoje)/86400000);};
+          // Entradas previstas: recebíveis em aberto (por vencimento)
+          const recsAb=(receivables||[]).filter(r=>!r.paid).map(r=>({d:dias(r.due_date),v:parseFloat(r.value)||0}));
+          // Saídas previstas: contas a pagar em aberto (saldo restante, por vencimento) + pedidos a fornecedor (saldo restante)
+          const paysAb=(payables||[]).filter(p=>!p.paid).map(p=>({d:dias(p.due_date),v:Math.max(0,(parseFloat(p.value)||0)-(parseFloat(p.paid_amount)||0))}));
+          const ordsAb=orderPayables.map(o=>({d:dias(o.due_date),v:Math.max(0,(parseFloat(o.value)||0)-(parseFloat(o.paid_amount)||0))}));
+          const saidasAb=[...paysAb,...ordsAb];
+          const faixas=[{l:"Em atraso",min:-99999,max:-1},{l:"Próx. 7 dias",min:0,max:7},{l:"8-15 dias",min:8,max:15},{l:"16-30 dias",min:16,max:30},{l:"31-60 dias",min:31,max:60},{l:"61-90 dias",min:61,max:90},{l:"+90 dias",min:91,max:99999}];
+          const inFx=(min,max)=>recsAb.filter(x=>x.d>=min&&x.d<=max).reduce((a,x)=>a+x.v,0);
+          const outFx=(min,max)=>saidasAb.filter(x=>x.d>=min&&x.d<=max).reduce((a,x)=>a+x.v,0);
+          let saldo=net; // começa do caixa atual
+          const linhas=faixas.map(f=>{const ent=inFx(f.min,f.max);const sai=outFx(f.min,f.max);const liq=ent-sai;saldo+=liq;return {...f,ent,sai,liq,saldo};});
+          const totEnt=recsAb.reduce((a,x)=>a+x.v,0),totSai=saidasAb.reduce((a,x)=>a+x.v,0);
+          const menorSaldo=Math.min(net,...linhas.map(l=>l.saldo));
+          const faixaNeg=linhas.find(l=>l.saldo<0);
+          return(
+          <div style={{animation:"fadeUp .4s ease"}}>
+            <h2 style={{fontFamily:"'Syne',sans-serif",fontWeight:800,fontSize:"1rem",color:"var(--tx)",marginBottom:".25rem"}}>📈 Projeção de Fluxo de Caixa</h2>
+            <p style={{fontSize:".72rem",color:"var(--tx5)",marginBottom:".75rem"}}>Partindo do caixa atual, o que deve entrar (recebíveis) e sair (contas + pedidos) por período de vencimento.</p>
+            <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(120px,1fr))",gap:".6rem",marginBottom:".75rem"}}>
+              <KCard label="Caixa hoje" value={fmt(net)} color={net>=0?"#10b981":"#f56565"}/>
+              <KCard label="A entrar" value={fmt(totEnt)} color="#4f5ef0"/>
+              <KCard label="A sair" value={fmt(totSai)} color="#f59e0b"/>
+              <KCard label="Saldo final previsto" value={fmt(net+totEnt-totSai)} color={(net+totEnt-totSai)>=0?"#10b981":"#f56565"}/>
+            </div>
+            {menorSaldo<0&&faixaNeg&&(
+              <div style={{background:"#f5656512",border:"1px solid #f5656540",borderRadius:".6rem",padding:".7rem .9rem",marginBottom:".75rem",fontSize:".76rem",color:"#f56565",fontWeight:600}}>
+                ⚠️ Alerta de caixa: pela projeção, seu saldo fica negativo ({fmt(menorSaldo)}) no período “{faixaNeg.l}”. Antecipe recebimentos ou renegocie pagamentos desse período.
+              </div>
+            )}
+            <div style={{background:"var(--card)",border:"1px solid var(--bdr)",borderRadius:".75rem",overflow:"hidden"}}>
+              <div style={{display:"grid",gridTemplateColumns:"1.3fr 1fr 1fr 1fr 1.1fr",gap:".3rem",padding:".55rem .85rem",borderBottom:"1px solid var(--bdr)",background:"var(--pill)",fontSize:".62rem",color:"var(--sub)",textTransform:"uppercase",letterSpacing:".03em",fontWeight:700}}>
+                <span>Período</span><span style={{textAlign:"right"}}>Entradas</span><span style={{textAlign:"right"}}>Saídas</span><span style={{textAlign:"right"}}>Líquido</span><span style={{textAlign:"right"}}>Saldo acum.</span>
+              </div>
+              {linhas.map(l=>(
+                <div key={l.l} style={{display:"grid",gridTemplateColumns:"1.3fr 1fr 1fr 1fr 1.1fr",gap:".3rem",padding:".55rem .85rem",borderBottom:"1px solid var(--sep)",fontSize:".75rem",alignItems:"center",background:l.l==="Em atraso"&&(l.ent>0||l.sai>0)?"#f5656506":"transparent"}}>
+                  <span style={{fontWeight:600,color:"var(--tx2)"}}>{l.l}</span>
+                  <span style={{textAlign:"right",color:l.ent>0?"#10b981":"var(--tx6)",fontWeight:l.ent>0?600:400}}>{l.ent>0?fmt(l.ent):"—"}</span>
+                  <span style={{textAlign:"right",color:l.sai>0?"#f59e0b":"var(--tx6)",fontWeight:l.sai>0?600:400}}>{l.sai>0?fmt(l.sai):"—"}</span>
+                  <span style={{textAlign:"right",fontWeight:700,color:l.liq>0?"#10b981":l.liq<0?"#f56565":"var(--tx6)"}}>{l.liq!==0?(l.liq>0?"+":"")+fmt(l.liq):"—"}</span>
+                  <span style={{textAlign:"right",fontWeight:800,fontFamily:"'Syne',sans-serif",color:l.saldo>=0?"var(--tx)":"#f56565"}}>{fmt(l.saldo)}</span>
+                </div>
+              ))}
+            </div>
+            <p style={{fontSize:".66rem",color:"var(--tx6)",marginTop:".6rem"}}>💡 A coluna “Saldo acum.” mostra como o caixa evolui somando cada período. Se ficar vermelho, é onde o caixa aperta. Itens sem data de vencimento entram em “Próx. 7 dias”.</p>
+          </div>
+          );
+        })()}
+
         {/* ══ FINANCEIRO · SAÚDE FINANCEIRA / DRE ══ */}
         {tab==="financeiro"&&finTab==="saude"&&(()=>{
           const hoje=new Date();
@@ -2488,15 +2610,34 @@ export default function App(){
           const custoFixo=custoFixoRec+custoFixoOutros;
           const pag30=(payables||[]).filter(p=>!p.paid&&p.due_date&&new Date(p.due_date)<=lim30).reduce((a,p)=>a+(parseFloat(p.value)||0),0);
           const vencidasRec=(receivables||[]).filter(r=>!r.paid&&r.due_date&&new Date(r.due_date)<hoje).reduce((a,r)=>a+(parseFloat(r.value)||0),0);
+          // Qualidade do recebimento: inadimplência, DSO (prazo médio) e carteira de inadimplentes
+          const recAbertos=(receivables||[]).filter(r=>!r.paid);
+          const totalReceber=recAbertos.reduce((a,r)=>a+(parseFloat(r.value)||0),0);
+          const inadimplencia=totalReceber>0?(vencidasRec/totalReceber)*100:0;
+          const _d90=new Date();_d90.setDate(_d90.getDate()-90);
+          const vendasPrazo90=(receivables||[]).filter(r=>r.created_at&&new Date(r.created_at)>=_d90).reduce((a,r)=>a+(parseFloat(r.value)||0),0);
+          const dso=vendasPrazo90>0?Math.round((totalReceber/vendasPrazo90)*90):null;
+          const inadMap={};
+          recAbertos.filter(r=>r.due_date&&new Date(r.due_date)<hoje).forEach(r=>{
+            const key=r.client_name||r.client_id||"Sem cliente";
+            if(!inadMap[key])inadMap[key]={name:r.client_name||"Sem cliente",client_id:r.client_id,total:0,count:0,maxDias:0,oldest:null};
+            const o=inadMap[key];o.total+=parseFloat(r.value)||0;o.count++;
+            const dd=Math.floor((hoje-new Date(r.due_date+"T00:00:00"))/86400000);
+            if(dd>=o.maxDias){o.maxDias=dd;o.oldest=r;}
+          });
+          const carteiraInad=Object.values(inadMap).sort((a,b)=>b.total-a.total);
           const breakEven=margin>0?custoFixo/(margin/100):0;
           const coberturaFixo=custoFixo>0?net/custoFixo:(net>0?99:0);
           const liquidezOk=net>=pag30;
           const margStatus=margin>=20?{c:"#10b981",t:"Saudável"}:margin>=10?{c:"#f59e0b",t:"Atenção"}:{c:"#f56565",t:"Baixa"};
-          // score simples 0-100
+          // score 0-100 — inclui qualidade do recebimento (inadimplência)
           let score=0;
-          if(net>0)score+=30; if(margin>=20)score+=25; else if(margin>=10)score+=12;
-          if(liquidezOk)score+=25; if(vencidasRec===0)score+=10; if(coberturaFixo>=1)score+=10;
-          score=Math.min(100,score);
+          if(net>0)score+=25;
+          if(margin>=20)score+=20; else if(margin>=10)score+=10;
+          if(liquidezOk)score+=20;
+          if(inadimplencia<=5)score+=20; else if(inadimplencia<=15)score+=12; else if(inadimplencia<=25)score+=5;
+          if(coberturaFixo>=1)score+=15;
+          score=Math.min(100,Math.round(score));
           const scoreColor=score>=70?"#10b981":score>=40?"#f59e0b":"#f56565";
           const scoreLabel=score>=70?"Saudável":score>=40?"Requer atenção":"Crítico";
           // Comparativo mês atual vs mês anterior (campo date = DD/MM/YYYY)
@@ -2543,7 +2684,30 @@ export default function App(){
                 <KCard label="Lucro líquido" value={fmt(net)} color={net>=0?"#4f5ef0":"#f56565"}/>
                 <KCard label="Margem" value={fmtPct(margin)} sub={margStatus.t} color={margStatus.c}/>
                 <KCard label="Markup" value={fmtPct(mrkp)} color="#f59e0b"/>
+                <KCard label="Inadimplência" value={fmtPct(inadimplencia)} sub={inadimplencia<=15?"saudável (<15%)":inadimplencia<=25?"atenção":"crítico"} color={inadimplencia<=15?"#10b981":inadimplencia<=25?"#f59e0b":"#f56565"}/>
+                <KCard label="Prazo médio (DSO)" value={dso!==null?dso+"d":"—"} sub={dso!==null?(dso<=30?"saudável (<30d)":dso<=45?"atenção":"alto"):"sem vendas a prazo"} color={dso===null?"#8890b0":dso<=30?"#10b981":dso<=45?"#f59e0b":"#f56565"}/>
               </div>
+              {carteiraInad.length>0&&(
+                <div style={{background:"var(--card)",border:"1px solid #f5656540",borderRadius:".75rem",overflow:"hidden",marginBottom:".75rem"}}>
+                  <div style={{padding:".7rem 1rem",borderBottom:"1px solid var(--sep)",display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:".4rem"}}>
+                    <span style={{fontFamily:"'Syne',sans-serif",fontWeight:700,fontSize:".82rem",color:"#f56565"}}>🚨 Carteira de Inadimplentes</span>
+                    <span style={{fontSize:".68rem",color:"var(--tx5)"}}>{carteiraInad.length} cliente(s) · {fmt(carteiraInad.reduce((a,c)=>a+c.total,0))} em atraso</span>
+                  </div>
+                  {carteiraInad.map((c,i)=>(
+                    <div key={i} style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:".6rem 1rem",borderBottom:"1px solid var(--sep)",gap:".5rem"}}>
+                      <div style={{minWidth:0}}>
+                        <div style={{fontWeight:700,fontSize:".8rem",color:"var(--tx)"}}>{c.name}</div>
+                        <div style={{fontSize:".66rem",color:"#f56565"}}>{c.count} conta(s) vencida(s) · atraso de até {c.maxDias} dia{c.maxDias!==1?"s":""}</div>
+                      </div>
+                      <div style={{display:"flex",alignItems:"center",gap:".5rem",flexShrink:0}}>
+                        <span style={{fontWeight:800,fontFamily:"'Syne',sans-serif",color:"#f56565",fontSize:".88rem"}}>{fmt(c.total)}</span>
+                        {c.oldest&&<button onClick={()=>cobrarWhatsApp(c.oldest)} title="Cobrar no WhatsApp" style={{background:"#25D36615",border:"1px solid #25D36640",borderRadius:".4rem",padding:".25rem .5rem",color:"#1ba34e",fontSize:".7rem",fontFamily:"'DM Sans',sans-serif",fontWeight:600,cursor:"pointer"}}>📲 Cobrar</button>}
+                      </div>
+                    </div>
+                  ))}
+                  <div style={{padding:".5rem 1rem",fontSize:".64rem",color:"var(--tx6)"}}>Clientes com contas a receber vencidas. Quitar ou negociar essas contas melhora direto seu índice de saúde.</div>
+                </div>
+              )}
               {/* Break-even */}
               <div style={{background:"var(--card)",border:"1px solid var(--bdr)",borderRadius:".75rem",padding:"1rem",marginBottom:".75rem"}}>
                 <div style={{fontFamily:"'Syne',sans-serif",fontWeight:700,fontSize:".82rem",color:"var(--tx2)",marginBottom:".6rem"}}>⚖️ Ponto de Equilíbrio (Break-even)</div>
@@ -2874,6 +3038,13 @@ export default function App(){
                         const col=nxt!==null&&nxt<=2?"#f59e0b":"#10b981";
                         return <div style={{fontSize:".64rem",color:col,marginTop:".1rem"}}>💉 {c.dose} · {intv}d{nxt!==null?" · "+(nxt<=0?"🔔 Dose hoje!":nxt<=2?"⚠️ "+nxt+"d":"Próxima: "+nxt+"d"):""}</div>;
                       })()}
+                      {(()=>{
+                        const fin=clientFin(c.id,c.name);
+                        const lim=parseFloat(c.credit_limit)||0;
+                        if(fin.aberto<=0.005&&lim<=0&&fin.pagas===0)return null;
+                        const over=lim>0&&fin.aberto>lim+0.005;
+                        return <div style={{fontSize:".64rem",marginTop:".1rem",fontWeight:600,color:over?"#f56565":fin.vencidasAbertas>0?"#f59e0b":"#4f5ef0"}}>💳 Fiado em aberto: {fmt(fin.aberto)}{lim>0?" / limite "+fmt(lim):""}{over?" ⚠️ acima do limite":""}{fin.vencidasAbertas>0?" · "+fin.vencidasAbertas+" vencida(s)":""}{fin.pontualidade!==null?" · "+fmtPct(fin.pontualidade)+" em dia":""}</div>;
+                      })()}
                     </div>
                   </div>
                   <div style={{display:"flex",alignItems:"center",gap:".6rem"}}>
@@ -3104,7 +3275,7 @@ export default function App(){
                 <Btn onClick={()=>setShowOrderModal(true)}><Ic n="plus" s={13}/>Criar primeiro pedido</Btn>
                </div>
               :orders.map(order=>{
-                const items=JSON.parse(order.items||"[]");
+                const items=parseItems(order);
                 const isDropship=items.some(i=>i.dropship);
                 const statusColor=order.status==="recebido"?"#10b981":order.status==="perdido"?"#f56565":order.status==="parcial"?"#0891b2":order.status==="cancelado"?"#666a88":"#f59e0b";
                 const statusLabel=order.status==="recebido"?"✅ Recebido":order.status==="cancelado"?"❌ Cancelado":order.status==="perdido"?"💀 Perdido":"🟡 Pendente";
@@ -3129,7 +3300,7 @@ export default function App(){
                         <button onClick={()=>exportOrderPDF(order)} title="Gerar PDF do pedido" style={{background:"#450a0a",border:"1px solid #7f1d1d",borderRadius:".4rem",padding:".28rem .5rem",color:"#f87171",display:"flex",alignItems:"center",cursor:"pointer"}}><Ic n="pdf" s={13}/></button>
                         {(order.status==="pendente"||order.status==="parcial")&&(
                           <button onClick={()=>{
-                            const itsAll=JSON.parse(order.items||"[]");
+                            const itsAll=parseItems(order);
                             const initChecked={};
                             itsAll.forEach((it,i)=>{if(!it.received)initChecked[i]={checked:false,qty:it.qty};});
                             setReceiveChecked(initChecked);
@@ -3202,11 +3373,45 @@ export default function App(){
               <h2 style={{fontFamily:"'Syne',sans-serif",fontWeight:800,fontSize:"1rem",color:"var(--tx)"}}>💰 Contas a Receber</h2>
               <XBtn rows={receivables.map(r=>({Cliente:r.client_name||"—",Descrição:r.description,Valor:fmt(r.value),Vencimento:r.due_date||"—",Status:r.paid?"Recebido":"Pendente"}))} name="recebiveis-caixapro" sheet="A Receber"/>
             </div>
-            <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:".6rem",marginBottom:".75rem"}}>
-              <KCard label="Em aberto" value={fmtN((receivables||[]).filter(r=>!r.paid).length)} sub={fmt((receivables||[]).filter(r=>!r.paid).reduce((a,r)=>a+r.value,0))} color="#4f5ef0"/>
-              <KCard label="Vencidas" value={fmtN(receivables.filter(r=>!r.paid&&r.due_date&&new Date(r.due_date)<new Date()).length)} sub={fmt(receivables.filter(r=>!r.paid&&r.due_date&&new Date(r.due_date)<new Date()).reduce((a,r)=>a+r.value,0))} color="#f56565"/>
-              <KCard label="Recebido total" value={fmt(receivables.filter(r=>r.paid).reduce((a,r)=>a+r.value,0))} color="#10b981"/>
-            </div>
+            {(()=>{
+              const abertos=(receivables||[]).filter(r=>!r.paid);
+              const totalAberto=abertos.reduce((a,r)=>a+(parseFloat(r.value)||0),0);
+              const hoje=new Date();hoje.setHours(0,0,0,0);
+              const dOver=r=>r.due_date?Math.floor((hoje-new Date(r.due_date+"T00:00:00"))/86400000):0;
+              const fx=(min,max)=>abertos.filter(r=>{const d=dOver(r);return d>=min&&(max===null||d<=max);}).reduce((a,r)=>a+(parseFloat(r.value)||0),0);
+              const aVencer=abertos.filter(r=>dOver(r)<=0).reduce((a,r)=>a+(parseFloat(r.value)||0),0);
+              const b1=fx(1,30),b2=fx(31,60),b3=fx(61,90),b4=fx(91,null);
+              const vencidoTot=b1+b2+b3+b4;
+              const inad=totalAberto>0?(vencidoTot/totalAberto)*100:0;
+              const recebidoTot=(receivables||[]).filter(r=>r.paid).reduce((a,r)=>a+(parseFloat(r.value)||0),0);
+              const buckets=[{l:"A vencer",v:aVencer,c:"#10b981"},{l:"1-30d",v:b1,c:"#f59e0b"},{l:"31-60d",v:b2,c:"#f97316"},{l:"61-90d",v:b3,c:"#ef4444"},{l:"+90d",v:b4,c:"#b91c1c"}];
+              return(<>
+                <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:".6rem",marginBottom:".6rem"}}>
+                  <KCard label="Em aberto" value={fmtN(abertos.length)} sub={fmt(totalAberto)} color="#4f5ef0"/>
+                  <KCard label="Vencido" value={fmt(vencidoTot)} sub={fmtN(abertos.filter(r=>dOver(r)>0).length)+" conta(s)"} color="#f56565"/>
+                  <KCard label="Inadimplência" value={fmtPct(inad)} sub={inad<=15?"saudável (<15%)":inad<=25?"atenção":"crítico"} color={inad<=15?"#10b981":inad<=25?"#f59e0b":"#f56565"}/>
+                </div>
+                <div style={{background:"var(--card)",border:"1px solid var(--bdr)",borderRadius:".75rem",padding:".75rem .9rem",marginBottom:".75rem"}}>
+                  <div style={{fontSize:".7rem",color:"var(--sub)",textTransform:"uppercase",letterSpacing:".04em",marginBottom:".5rem",fontWeight:700}}>📅 Envelhecimento dos recebíveis</div>
+                  {totalAberto<=0
+                    ?<div style={{fontSize:".75rem",color:"var(--tx5)"}}>Nenhum valor em aberto.</div>
+                    :<>
+                      <div style={{display:"flex",height:10,borderRadius:"99px",overflow:"hidden",marginBottom:".55rem",background:"var(--pill)"}}>
+                        {buckets.map(bk=>bk.v>0&&<div key={bk.l} style={{width:(bk.v/totalAberto*100)+"%",background:bk.c}} title={bk.l+": "+fmt(bk.v)}/>)}
+                      </div>
+                      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(92px,1fr))",gap:".4rem"}}>
+                        {buckets.map(bk=>(
+                          <div key={bk.l} style={{textAlign:"center",padding:".35rem",borderRadius:".4rem",background:"var(--pill)"}}>
+                            <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:".25rem",fontSize:".62rem",color:"var(--tx5)"}}><span style={{width:7,height:7,borderRadius:"50%",background:bk.c,display:"inline-block"}}/>{bk.l}</div>
+                            <div style={{fontSize:".76rem",fontWeight:700,fontFamily:"'Syne',sans-serif",color:bk.v>0?bk.c:"var(--tx6)"}}>{fmt(bk.v)}</div>
+                          </div>
+                        ))}
+                      </div>
+                    </>
+                  }
+                </div>
+              </>);
+            })()}
             <div style={{background:"var(--card)",border:"1px solid var(--bdr)",borderRadius:".75rem",padding:"1rem",marginBottom:".75rem"}}>
               <div style={{fontFamily:"'Syne',sans-serif",fontWeight:700,fontSize:".8rem",color:"var(--tx2)",marginBottom:".65rem"}}>➕ Nova conta a receber</div>
               <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))",gap:".5rem",marginBottom:".5rem"}}>
@@ -3253,6 +3458,8 @@ export default function App(){
                       </div>
                       <div style={{display:"flex",alignItems:"center",gap:".55rem",flexShrink:0,marginLeft:".75rem"}}>
                         <span style={{fontWeight:700,fontFamily:"'Syne',sans-serif",color:r.paid?"#10b981":ov?"#f56565":"#f59e0b",fontSize:".9rem"}}>{fmt(r.value)}</span>
+                        {!r.paid&&<button onClick={()=>cobrarWhatsApp(r)} title="Enviar lembrete de cobrança no WhatsApp" style={{background:"#25D36615",border:"1px solid #25D36640",borderRadius:".4rem",padding:".28rem .55rem",color:"#1ba34e",fontSize:".72rem",fontFamily:"'DM Sans',sans-serif",fontWeight:600,cursor:"pointer"}}>📲 Cobrar</button>}
+                        <button onClick={()=>exportReceivablePDF(r)} title="Gerar recibo/promissória em PDF" style={{background:"#450a0a",border:"1px solid #7f1d1d",borderRadius:".4rem",padding:".28rem .5rem",color:"#f87171",fontSize:".72rem",fontFamily:"'DM Sans',sans-serif",fontWeight:600,cursor:"pointer"}}>📄</button>
                         {!r.paid&&<button onClick={()=>payReceivable(r.id)} style={{background:"#10b98115",border:"1px solid #10b98130",borderRadius:".4rem",padding:".28rem .6rem",color:"#10b981",fontSize:".72rem",fontFamily:"'DM Sans',sans-serif",fontWeight:600,cursor:"pointer"}}>✅ Recebido</button>}
                         {canDelete&&<button onClick={()=>deleteReceivable(r.id)} style={{background:"none",border:"none",color:"var(--tx6)",padding:".2rem",cursor:"pointer"}}><Ic n="trash" s={13}/></button>}
                       </div>
@@ -3629,6 +3836,11 @@ export default function App(){
                   )}
                   <div style={{display:"flex",justifyContent:"flex-end"}}>
                     <Btn v="ok" onClick={()=>{saveCompanyInfo(ci);setLocalCI(null);}}><Ic n="save" s={13}/>Salvar Informações da Empresa</Btn>
+                  </div>
+                  <div style={{borderTop:"1px solid var(--bdr)",marginTop:"1.1rem",paddingTop:"1rem"}}>
+                    <div style={{fontFamily:"'Syne',sans-serif",fontWeight:700,fontSize:".82rem",color:"var(--tx2)",marginBottom:".35rem"}}>💾 Backup dos dados</div>
+                    <div style={{fontSize:".7rem",color:"var(--tx5)",marginBottom:".7rem"}}>Baixe uma cópia completa de tudo — vendas, estoque, pedidos, contas a pagar/receber, clientes, fornecedores, caixa e configurações — num único arquivo. Guarde periodicamente em local seguro (nuvem/pendrive).</div>
+                    <Btn v="ghost" onClick={exportBackup}><Ic n="save" s={13}/>Baixar backup completo (.json)</Btn>
                   </div>
                 </div>
               );
@@ -4020,6 +4232,15 @@ export default function App(){
             <div style={{fontSize:".7rem",color:"#8b44f0",display:"flex",gap:".3rem",alignItems:"center",marginTop:".5rem"}}>
               <Ic n="info" s={11}/>{cartDueDate?"Vai para A Receber com vencimento em "+cartDueDate.split("-").reverse().join("/"):"Sem data → vence em 30 dias. Marque como recebido quando o cliente pagar."}
             </div>
+            {cartClient.id&&(()=>{
+              const cli=clients.find(c=>c.id===cartClient.id);const lim=parseFloat(cli&&cli.credit_limit)||0;
+              if(lim<=0)return null;
+              const fin=clientFin(cartClient.id,cartClient.name);
+              const novoTotal=fin.aberto+cartTotal;
+              const disp=lim-fin.aberto;
+              if(novoTotal>lim+0.005)return <div style={{marginTop:".5rem",background:"#f5656518",border:"1px solid #f5656540",borderRadius:".45rem",padding:".5rem .7rem",fontSize:".72rem",color:"#f56565",fontWeight:600}}>⚠️ Limite de crédito estourado: {cartClient.name} já tem {fmt(fin.aberto)} em aberto + esta venda ({fmt(cartTotal)}) = {fmt(novoTotal)}, acima do limite de {fmt(lim)}. Você pode prosseguir, mas avalie o risco.</div>;
+              return <div style={{marginTop:".5rem",fontSize:".68rem",color:"#10b981"}}>✅ Dentro do limite · disponível {fmt(disp)} de {fmt(lim)}{fin.vencidasAbertas>0?" · ⚠️ cliente tem "+fin.vencidasAbertas+" conta(s) vencida(s)":""}</div>;
+            })()}
           </div>
         )}
         {/* ── PAGAMENTO DIVIDIDO (split) ── */}
@@ -4309,12 +4530,14 @@ export default function App(){
       <Inp label="Nome *" placeholder="Nome completo" value={cf.name} onChange={e=>setCf(f=>({...f,name:e.target.value}))}/>
       <R2><Inp label="Telefone / WhatsApp" type="tel" placeholder="(66) 99999-9999" value={cf.phone} onChange={e=>setCf(f=>({...f,phone:e.target.value}))}/><Inp label="E-mail" type="email" placeholder="email@..." value={cf.email} onChange={e=>setCf(f=>({...f,email:e.target.value}))}/></R2>
       <Inp label="Observações" hint="ex: dosagem, periodicidade..." placeholder="Ex: Usa 2.5mg a cada 7 dias" value={cf.notes} onChange={e=>setCf(f=>({...f,notes:e.target.value}))}/>
+      <Inp label="Limite de crédito p/ fiado (R$)" hint="0 = sem limite definido" type="number" placeholder="0,00" value={cf.credit_limit} onChange={e=>setCf(f=>({...f,credit_limit:e.target.value}))}/>
       <div style={{display:"flex",gap:".5rem",justifyContent:"flex-end"}}><Btn v="ghost" onClick={()=>setModal(null)}>Cancelar</Btn><Btn onClick={addClient}><Ic n="save" s={13}/>Salvar</Btn></div>
     </Modal>)}
     {modal==="editCliente"&&editing&&(<Modal title="Editar Cliente" onClose={()=>{setModal(null);setEditing(null);}} icon="edit" wide>
       <Inp label="Nome *" value={editing.name} onChange={e=>setEditing(v=>({...v,name:e.target.value}))}/>
       <R2><Inp label="Telefone" type="tel" value={editing.phone||""} onChange={e=>setEditing(v=>({...v,phone:e.target.value}))}/><Inp label="E-mail" type="email" value={editing.email||""} onChange={e=>setEditing(v=>({...v,email:e.target.value}))}/></R2>
       <Inp label="Observações" value={editing.notes||""} onChange={e=>setEditing(v=>({...v,notes:e.target.value}))}/>
+      <Inp label="Limite de crédito p/ fiado (R$)" hint="0 = sem limite" type="number" value={editing.credit_limit||""} onChange={e=>setEditing(v=>({...v,credit_limit:e.target.value}))}/>
       <div style={{borderTop:"1px solid var(--bdr)",paddingTop:".85rem",marginTop:".25rem"}}>
         <div style={{fontWeight:700,fontSize:".78rem",color:"#4f5ef0",marginBottom:".65rem"}}>💉 Protocolo de Tratamento (opcional)</div>
         <R2><Inp label="Dose atual" placeholder="Ex: 2.5mg, 5mg..." value={editing.dose||""} onChange={e=>setEditing(v=>({...v,dose:e.target.value}))}/><Inp label="Intervalo (dias)" type="number" min="1" placeholder="7" value={editing.interval_days||""} onChange={e=>setEditing(v=>({...v,interval_days:e.target.value}))}/></R2>
@@ -4766,7 +4989,7 @@ export default function App(){
 
     {/* ══ CONFIRMAR RECEBIMENTO ══ */}
     {showReceiveModal&&(()=>{
-      const allItems=JSON.parse(showReceiveModal.items||"[]");
+      const allItems=parseItems(showReceiveModal);
       const isDropshipOrder=allItems.some(i=>i.dropship);
       const pendingItems=allItems.map((it,i)=>({...it,_idx:i})).filter(it=>!it.received);
       const checkedList=Object.entries(receiveChecked)
